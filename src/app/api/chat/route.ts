@@ -7,12 +7,13 @@ import { rateLimitOrThrow } from "@/lib/rate-limit";
 
 export async function POST(req: Request) {
   try {
-    const user = await getAuthedUser();
+const user = await getAuthedUser();
 
-    // 30 req/min per user
-    rateLimitOrThrow(`chat:${user.id}`, 30, 60_000);
+const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+// 30 req/min per user+ip
+rateLimitOrThrow(`chat:${user.id}:${ip}`, 30, 60_000);
 
-    const body = chatSchema.parse(await req.json());
+const body = chatSchema.parse(await req.json());
     const result = await runChat({ userId: user.id, message: body.message, mode: body.mode });
 
     return ok(result);
