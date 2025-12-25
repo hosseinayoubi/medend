@@ -7,7 +7,7 @@ import { requireAuth } from "@/lib/clientAuth";
 type Msg = { id?: string; role: "user" | "assistant"; content: string; mode?: string; createdAt?: string };
 
 export default function ChatPage() {
-  const [mode, setMode] = useState<"general" | "therapy" | "recipe">("general");
+  const [mode, setMode] = useState<"medical" | "therapy" | "recipe">("medical");
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<Msg[]>([]);
   const [loading, setLoading] = useState(true);
@@ -65,7 +65,7 @@ export default function ChatPage() {
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <label style={{ fontSize: 13, color: "#475569" }}>Mode</label>
           <select value={mode} onChange={(e) => setMode(e.target.value as any)} style={select}>
-            <option value="general">General</option>
+            <option value="medical">General</option>
             <option value="therapy">Therapy</option>
             <option value="recipe">Recipe</option>
           </select>
