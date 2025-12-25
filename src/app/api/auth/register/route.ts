@@ -24,8 +24,12 @@ export async function POST(req: Request) {
     await createSession(user.id);
     return ok({ user });
   } catch (e: any) {
-    if (e?.name === "ZodError") return fail("INVALID_INPUT", "Invalid input", 400, e.flatten?.());
-    if (e instanceof AppError) return fail(e.code, e.message, e.status, (e as any).extra);
+    if (e?.name === "ZodError") {
+      return fail("INVALID_INPUT", "Invalid input", 400, e.flatten?.());
+    }
+    if (e instanceof AppError) {
+      return fail(e.code, e.message, e.status, (e as any).extra);
+    }
     return fail("SERVER_ERROR", "Something went wrong", 500);
   }
 }
