@@ -1,0 +1,156 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  name         String?
+  passwordHash String
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  sessions     Session[]
+  messages     ChatMessage[]
+  questionnaire QuestionnaireResponse?
+  journal       Journal?
+  recipeCaches  RecipeCache[]
+  savedRecipes  SavedRecipe[]
+  therapySessions TherapySession[]
+  therapyMessages TherapyMessage[]
+  doctorReports DoctorReport[]
+  profilePatches ProfilePatchAudit[]
+
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenHash String   @unique
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model ChatMessage {
+  id        String   @id @default(cuid())
+  userId    String
+  role      String   // "user" | "assistant"
+  mode      String   // "medical" | "therapy" | "recipe"
+  content   String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([mode])
+}
+
+model QuestionnaireResponse {
+  userId    String   @id
+  data      Json
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Journal {
+  userId    String   @id
+  data      Json
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model RecipeCache {
+  id        String   @id @default(cuid())
+  userId    String
+  cacheKey  String
+  input     Json
+  output    Json
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, cacheKey])
+  @@index([userId, expiresAt])
+}
+
+model SavedRecipe {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String
+  data      Json
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+model TherapySession {
+  id            String   @id @default(cuid())
+  userId        String
+  title         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  lastMessageAt DateTime?
+
+  user     User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages TherapyMessage[]
+
+  @@index([userId, updatedAt])
+}
+
+model TherapyMessage {
+  id        String   @id @default(cuid())
+  userId    String
+  sessionId String
+  role      String
+  content   String
+  flags     Json?
+  createdAt DateTime @default(now())
+
+  user    User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session TherapySession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([userId, sessionId, createdAt])
+}
+
+model DoctorReport {
+  id        String   @id @default(cuid())
+  userId    String
+  language  String
+  content   String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([language])
+}
+
+model ProfilePatchAudit {
+  id        String   @id @default(cuid())
+  userId    String
+  source    String
+  version   Int
+  patch     Json
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([source])
+}
