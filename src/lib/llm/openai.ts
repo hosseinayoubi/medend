@@ -2,7 +2,7 @@ import type { LlmProvider, ChatMode } from "./provider";
 import { AppError } from "@/lib/errors";
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
-const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5-mini";
 
 /**
  * Minimal OpenAI Chat Completions request via fetch.
