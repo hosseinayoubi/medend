@@ -1,15 +1,18 @@
-import { ok, fail } from "@/lib/response";
-import { AppError } from "@/lib/errors";
-import { loginSchema } from "@/validators/auth.schema";
-import { loginUser } from "@/services/auth.service";
-import { createSession } from "@/lib/auth";
-import { rateLimitOrThrow } from "@/lib/rate-limit";
-
 export async function POST(req: Request) {
   try {
-    rateLimitOrThrow("auth:login", 10, 60_000);
+    const ip =
+      req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
+      req.headers.get("x-real-ip") ??
+      "unknown";
+
+    // 10 req/min per IP
+    rateLimitOrThrow(`auth:login:ip:${ip}`, 10, 60_000);
 
     const body = loginSchema.parse(await req.json());
+
+    // 10 req/min per email (optional but recommended)
+    rateLimitOrThrow(`auth:login:email:${body.email.toLowerCase()}`, 10, 60_000);
+
     const user = await loginUser(body.email.toLowerCase(), body.password);
 
     await createSession(user.id);
