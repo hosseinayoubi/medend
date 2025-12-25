@@ -65,7 +65,7 @@ export default function ChatPage() {
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <label style={{ fontSize: 13, color: "#475569" }}>Mode</label>
           <select value={mode} onChange={(e) => setMode(e.target.value as any)} style={select}>
-            <option value="medical">General</option>
+            <option value="medical">Medical</option>
             <option value="therapy">Therapy</option>
             <option value="recipe">Recipe</option>
           </select>
