@@ -1,3 +1,4 @@
+// src/lib/rate-limit.ts
 import { AppError } from "@/lib/errors";
 
 type Bucket = { count: number; resetAt: number };
@@ -20,8 +21,8 @@ export function rateLimitOrThrow(key: string, limit: number, windowMs: number) {
 
   // already at/over limit
   if (b.count >= limit) {
-    const retrySec = Math.max(1, Math.ceil((b.resetAt - now) / 1000));
-    throw new AppError("RATE_LIMITED", `Too many requests. Retry in ${retrySec}s.`, 429);
+    const retryAfterSec = Math.max(1, Math.ceil((b.resetAt - now) / 1000));
+    throw new AppError("RATE_LIMITED", "Too many requests.", 429, { retryAfterSec });
   }
 
   // consume 1 token
