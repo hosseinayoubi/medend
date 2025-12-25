@@ -4,13 +4,11 @@ import { registerSchema } from "@/validators/auth.schema";
 import { registerUser } from "@/services/auth.service";
 import { createSession } from "@/lib/auth";
 import { rateLimitOrThrow } from "@/lib/rate-limit";
+import { getClientIp } from "@/lib/ip";
 
 export async function POST(req: Request) {
   try {
-    const ip =
-      req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-      req.headers.get("x-real-ip") ??
-      "unknown";
+    const ip = getClientIp(req);
 
     // 5 req/min per IP (stricter to reduce sign-up spam)
     rateLimitOrThrow(`auth:register:ip:${ip}`, 5, 60_000);
@@ -27,7 +25,7 @@ export async function POST(req: Request) {
     return ok({ user });
   } catch (e: any) {
     if (e?.name === "ZodError") return fail("INVALID_INPUT", "Invalid input", 400, e.flatten?.());
-    if (e instanceof AppError) return fail(e.code, e.message, e.status);
+    if (e instanceof AppError) return fail(e.code, e.message, e.status, (e as any).extra);
     return fail("SERVER_ERROR", "Something went wrong", 500);
   }
 }
