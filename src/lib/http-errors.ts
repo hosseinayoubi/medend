@@ -1,4 +1,3 @@
-// src/lib/http-errors.ts
 import { fail } from "@/lib/response";
 import { AppError } from "@/lib/errors";
 
