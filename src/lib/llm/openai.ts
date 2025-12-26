@@ -4,11 +4,10 @@ import { AppError } from "@/lib/errors";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5-mini";
 
-// پیش‌فرض‌ها
+// defaults
 const LLM_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS || 20_000);
 const LLM_TIMEOUT_RECIPE_MS = Number(process.env.LLM_TIMEOUT_RECIPE_MS || 35_000);
 
-// محدود کردن خروجی (برای جلوگیری از جواب‌های خیلی طولانی)
 const MAX_TOKENS_DEFAULT = Number(process.env.LLM_MAX_TOKENS || 550);
 const MAX_TOKENS_RECIPE = Number(process.env.LLM_MAX_TOKENS_RECIPE || 700);
 
@@ -32,8 +31,6 @@ function systemPrompt(mode: ChatMode) {
   }
 
   if (mode === "recipe") {
-    // 🔥 مهم: این نسخه کوتاه‌تره تا سریع‌تر جواب بده
-    // (به‌جای 3 تا رسپی + ماکروهای زیاد)
     return [
       "You are a practical recipe assistant.",
       "Return ONE best recipe tailored to the user’s message.",
@@ -47,7 +44,6 @@ function systemPrompt(mode: ChatMode) {
     ].join("\n");
   }
 
-  // medical
   return [
     "You are a medical information assistant.",
     "Do NOT provide a diagnosis.",
@@ -76,7 +72,7 @@ export const openaiProvider: LlmProvider = {
     const timeoutMs = mode === "recipe" ? LLM_TIMEOUT_RECIPE_MS : LLM_TIMEOUT_MS;
     const maxTokens = mode === "recipe" ? MAX_TOKENS_RECIPE : MAX_TOKENS_DEFAULT;
 
-    // 1 retry سبک برای transient errors
+    // 1 lightweight retry for transient errors
     for (let attempt = 0; attempt < 2; attempt++) {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -91,7 +87,8 @@ export const openaiProvider: LlmProvider = {
           },
           body: JSON.stringify({
             model: OPENAI_MODEL,
-            max_tokens: maxTokens, // ✅ محدود کردن خروجی
+            // ✅ IMPORTANT: new models don't accept max_tokens here
+            max_completion_tokens: maxTokens,
             messages: [
               { role: "system", content: systemPrompt(mode) },
               { role: "user", content: message },
@@ -107,11 +104,7 @@ export const openaiProvider: LlmProvider = {
             await sleep(250);
             continue;
           }
-          throw new AppError(
-            "LLM_ERROR",
-            `OpenAI error: ${res.status} ${text}`.slice(0, 500),
-            502
-          );
+          throw new AppError("LLM_ERROR", `OpenAI error: ${res.status} ${text}`.slice(0, 900), 502);
         }
 
         const data = (await res.json()) as any;
