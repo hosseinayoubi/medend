@@ -85,7 +85,7 @@ export const openaiProvider: LlmProvider = {
           },
           body: JSON.stringify({
             model: OPENAI_MODEL,
-            // ✅ مدل‌های جدید: max_tokens نه — باید این باشه:
+            // ✅ مدل‌های جدید: max_tokens نه — این باید باشه
             max_completion_tokens: maxTokens,
             messages: [
               { role: "system", content: systemPrompt(mode) },
@@ -102,11 +102,7 @@ export const openaiProvider: LlmProvider = {
             await sleep(250);
             continue;
           }
-          throw new AppError(
-            "LLM_ERROR",
-            `OpenAI error: ${res.status} ${text}`.slice(0, 900),
-            502
-          );
+          throw new AppError("LLM_ERROR", `OpenAI error: ${res.status} ${text}`.slice(0, 900), 502);
         }
 
         const data = (await res.json()) as any;
