@@ -18,6 +18,7 @@ const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5-mini";
 const LLM_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS || 20_000);
 const LLM_TIMEOUT_RECIPE_MS = Number(process.env.LLM_TIMEOUT_RECIPE_MS || 35_000);
 
+// ✅ توجه: برای gpt-5-mini باید max_completion_tokens استفاده شود
 const MAX_TOKENS_DEFAULT = Number(process.env.LLM_MAX_TOKENS || 550);
 const MAX_TOKENS_RECIPE = Number(process.env.LLM_MAX_TOKENS_RECIPE || 700);
 
@@ -106,7 +107,8 @@ async function openaiStream(opts: {
       body: JSON.stringify({
         model: OPENAI_MODEL,
         stream: true,
-        max_tokens: maxTokens,
+        // ✅ مهم: برای gpt-5-mini
+        max_completion_tokens: maxTokens,
         messages: [
           { role: "system", content: systemPrompt(mode) },
           { role: "user", content: message },
@@ -116,7 +118,7 @@ async function openaiStream(opts: {
 
     if (!res.ok || !res.body) {
       const text = await res.text().catch(() => "");
-      throw new AppError("LLM_ERROR", `OpenAI error: ${res.status} ${text}`.slice(0, 500), 502);
+      throw new AppError("LLM_ERROR", `OpenAI error: ${res.status} ${text}`.slice(0, 700), 502);
     }
 
     const reader = res.body.getReader();
@@ -139,10 +141,7 @@ async function openaiStream(opts: {
         const block = part.trim();
         if (!block) continue;
 
-        const dataLine = block
-          .split("\n")
-          .find((l) => l.startsWith("data:"));
-
+        const dataLine = block.split("\n").find((l) => l.startsWith("data:"));
         if (!dataLine) continue;
 
         const payload = dataLine.replace(/^data:\s*/, "");
@@ -181,7 +180,6 @@ export async function POST(req: Request) {
     const user = await getAuthedUser();
     const ip = getClientIp(req);
 
-    // 30 req/min per user+ip
     rateLimitOrThrow(`chat:${user.id}:${ip}`, 30, 60_000);
 
     // ✅ rawBody رو any نگه می‌داریم تا stream تایپ‌اسکریپت خطا نده
@@ -191,18 +189,18 @@ export async function POST(req: Request) {
     const mode = body.mode as ChatMode;
     const message = body.message as string;
 
-    // ✅ stream رو از rawBody یا Accept header تشخیص می‌دیم
+    // ✅ stream از rawBody یا Accept header
     const wantStream =
       rawBody?.stream === true ||
       req.headers.get("accept")?.includes("text/event-stream") === true;
 
     if (!wantStream) {
-      // حالت JSON یک‌جا (غیر استریم) — ذخیره + یک‌باره جواب
+      // حالت JSON یک‌جا
       await prisma.chatMessage.create({
         data: { userId: user.id, role: "user", mode, content: message },
       });
 
-      // برای حالت non-stream هم از همان openaiStream استفاده می‌کنیم ولی بدون onToken
+      // non-stream: با همین openaiStream ولی بدون ارسال token
       const result = await openaiStream({
         mode,
         message,
@@ -273,7 +271,10 @@ export async function POST(req: Request) {
             );
             controller.close();
           } catch (e: any) {
-            const msg = e instanceof AppError ? `${e.code}: ${e.message}` : "SERVER_ERROR: Something went wrong";
+            const msg =
+              e instanceof AppError
+                ? `${e.code}: ${e.message}`
+                : "SERVER_ERROR: Something went wrong";
 
             const safe =
               mode === "medical"
@@ -286,8 +287,12 @@ export async function POST(req: Request) {
               });
             } catch {}
 
-            controller.enqueue(encoder.encode(sseEvent("error", msg)));
-            controller.close();
+            try {
+              controller.enqueue(encoder.encode(sseEvent("error", msg)));
+            } catch {}
+            try {
+              controller.close();
+            } catch {}
           } finally {
             req.signal.removeEventListener("abort", onAbort);
           }
@@ -319,7 +324,6 @@ export async function GET(req: Request) {
     const user = await getAuthedUser();
     const ip = getClientIp(req);
 
-    // 60 req/min per user+ip (listing is cheaper)
     rateLimitOrThrow(`chat:list:${user.id}:${ip}`, 60, 60_000);
 
     const messages = await listRecentMessages(user.id, 30);
