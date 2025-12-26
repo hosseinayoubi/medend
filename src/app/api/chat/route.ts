@@ -8,18 +8,16 @@ import { getClientIp } from "@/lib/ip";
 import { failRateLimited } from "@/lib/http-errors";
 import { prisma } from "@/lib/db";
 
-// ✅ مهم: برای استریم روی Vercel/Next
+// برای استریم روی Next/Vercel
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5-mini";
 
-// timeout‌ها
 const LLM_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS || 20_000);
 const LLM_TIMEOUT_RECIPE_MS = Number(process.env.LLM_TIMEOUT_RECIPE_MS || 35_000);
 
-// max_tokens برای کوتاه نگه داشتن خروجی
 const MAX_TOKENS_DEFAULT = Number(process.env.LLM_MAX_TOKENS || 550);
 const MAX_TOKENS_RECIPE = Number(process.env.LLM_MAX_TOKENS_RECIPE || 700);
 
@@ -37,7 +35,6 @@ function systemPrompt(mode: ChatMode) {
   }
 
   if (mode === "recipe") {
-    // کوتاه‌تر = سریع‌تر (برای جلوگیری از timeout)
     return [
       "You are a practical recipe assistant.",
       "Return ONE best recipe tailored to the user’s message.",
@@ -71,22 +68,22 @@ function disclaimer(mode: ChatMode) {
 }
 
 function sseEvent(event: string, data: string) {
-  // data باید یک خط باشد یا \n را escaped کنیم
-  const safe = data.replace(/\r/g, "").split("\n").map((l) => `data: ${l}`).join("\n");
+  const safe = data
+    .replace(/\r/g, "")
+    .split("\n")
+    .map((l) => `data: ${l}`)
+    .join("\n");
   return `event: ${event}\n${safe}\n\n`;
 }
 
-async function openaiStream({
-  mode,
-  message,
-  onToken,
-  signal,
-}: {
+async function openaiStream(opts: {
   mode: ChatMode;
   message: string;
   onToken: (t: string) => void;
   signal: AbortSignal;
 }) {
+  const { mode, message, onToken, signal } = opts;
+
   if (!OPENAI_API_KEY) throw new AppError("LLM_MISCONFIG", "OPENAI_API_KEY missing", 500);
 
   const timeoutMs = mode === "recipe" ? LLM_TIMEOUT_RECIPE_MS : LLM_TIMEOUT_MS;
@@ -96,7 +93,6 @@ async function openaiStream({
   const abort = () => controller.abort();
   signal.addEventListener("abort", abort);
 
-  // تایمر تایم‌اوت داخلی
   const t = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
@@ -135,16 +131,18 @@ async function openaiStream({
 
       buffer += decoder.decode(value, { stream: true });
 
-      // OpenAI SSE chunks are separated by \n\n
+      // OpenAI stream chunks separated by \n\n
       const parts = buffer.split("\n\n");
       buffer = parts.pop() || "";
 
       for (const part of parts) {
-        const line = part.trim();
-        if (!line) continue;
+        const block = part.trim();
+        if (!block) continue;
 
-        // lines like: data: {...}
-        const dataLine = line.split("\n").find((l) => l.startsWith("data:"));
+        const dataLine = block
+          .split("\n")
+          .find((l) => l.startsWith("data:"));
+
         if (!dataLine) continue;
 
         const payload = dataLine.replace(/^data:\s*/, "");
@@ -160,7 +158,7 @@ async function openaiStream({
             onToken(delta);
           }
         } catch {
-          // ignore parse errors for safety
+          // ignore
         }
       }
     }
@@ -183,22 +181,28 @@ export async function POST(req: Request) {
     const user = await getAuthedUser();
     const ip = getClientIp(req);
 
+    // 30 req/min per user+ip
     rateLimitOrThrow(`chat:${user.id}:${ip}`, 30, 60_000);
 
-    const body = chatSchema.parse(await req.json());
+    // ✅ rawBody رو any نگه می‌داریم تا stream تایپ‌اسکریپت خطا نده
+    const rawBody: any = await req.json();
+    const body = chatSchema.parse(rawBody);
+
     const mode = body.mode as ChatMode;
     const message = body.message as string;
 
-    // ✅ اگر stream=false یا کلاینت stream نخواد → حالت عادی (JSON)
-    const wantStream = body?.stream === true || req.headers.get("accept")?.includes("text/event-stream");
+    // ✅ stream رو از rawBody یا Accept header تشخیص می‌دیم
+    const wantStream =
+      rawBody?.stream === true ||
+      req.headers.get("accept")?.includes("text/event-stream") === true;
 
     if (!wantStream) {
-      // حالت قبلی: ذخیره + پاسخ یک‌جا
+      // حالت JSON یک‌جا (غیر استریم) — ذخیره + یک‌باره جواب
       await prisma.chatMessage.create({
         data: { userId: user.id, role: "user", mode, content: message },
       });
 
-      // پاسخ غیر استریم با همون مدل (اما ممکنه کند باشد)
+      // برای حالت non-stream هم از همان openaiStream استفاده می‌کنیم ولی بدون onToken
       const result = await openaiStream({
         mode,
         message,
@@ -214,7 +218,6 @@ export async function POST(req: Request) {
     }
 
     // ✅ STREAMING (SSE)
-    // اول پیام user رو ذخیره کن
     await prisma.chatMessage.create({
       data: { userId: user.id, role: "user", mode, content: message },
     });
@@ -224,14 +227,16 @@ export async function POST(req: Request) {
         const encoder = new TextEncoder();
         const aborter = new AbortController();
 
-        // اگر کلاینت قطع کرد
         const onAbort = () => {
           try {
             controller.enqueue(encoder.encode(sseEvent("error", "Client disconnected")));
           } catch {}
-          controller.close();
+          try {
+            controller.close();
+          } catch {}
           aborter.abort();
         };
+
         req.signal.addEventListener("abort", onAbort);
 
         (async () => {
@@ -250,7 +255,6 @@ export async function POST(req: Request) {
               },
             });
 
-            // ذخیره assistant
             await prisma.chatMessage.create({
               data: { userId: user.id, role: "assistant", mode, content: fullAnswer },
             });
@@ -259,16 +263,18 @@ export async function POST(req: Request) {
               encoder.encode(
                 sseEvent(
                   "done",
-                  JSON.stringify({ mode, answer: fullAnswer, disclaimer: result.disclaimer || "" })
+                  JSON.stringify({
+                    mode,
+                    answer: fullAnswer,
+                    disclaimer: result.disclaimer || "",
+                  })
                 )
               )
             );
             controller.close();
           } catch (e: any) {
-            const msg =
-              e instanceof AppError ? `${e.code}: ${e.message}` : "SERVER_ERROR: Something went wrong";
+            const msg = e instanceof AppError ? `${e.code}: ${e.message}` : "SERVER_ERROR: Something went wrong";
 
-            // fallback assistant message ذخیره شود تا تاریخچه خراب نشود
             const safe =
               mode === "medical"
                 ? "I’m having trouble right now. If this is urgent, please contact a medical professional."
@@ -313,6 +319,7 @@ export async function GET(req: Request) {
     const user = await getAuthedUser();
     const ip = getClientIp(req);
 
+    // 60 req/min per user+ip (listing is cheaper)
     rateLimitOrThrow(`chat:list:${user.id}:${ip}`, 60, 60_000);
 
     const messages = await listRecentMessages(user.id, 30);
