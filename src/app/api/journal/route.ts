@@ -12,7 +12,7 @@ export async function GET() {
     const j = await prisma.journal.findUnique({ where: { userId: user.id } });
     return ok({ journal: j?.data ?? {} });
   } catch (e: any) {
-    if (e instanceof AppError) return fail(e.code, e.message, e.status);
+    if (e instanceof AppError) return fail(e.code, e.message, e.status, (e as any).extra);
     return fail("SERVER_ERROR", "Something went wrong", 500);
   }
 }
