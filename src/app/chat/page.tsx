@@ -87,6 +87,16 @@ export default function ChatPage() {
         body: JSON.stringify({ message: text, mode, stream: true }),
       });
 
+      // fallback: if server didn't stream, try JSON
+      const contentType = res.headers.get("content-type") || "";
+      if (!contentType.includes("text/event-stream")) {
+        const j = await res.json().catch(() => null);
+        if (!res.ok) throw new Error(j?.error?.message || `HTTP ${res.status}`);
+        const ans = j?.ok?.answer ?? j?.answer ?? "";
+        setMessages((prev) => prev.map((m) => (m.id === pendingId ? { ...m, content: ans } : m)));
+        return;
+      }
+
       if (!res.ok || !res.body) {
         const j = await res.json().catch(() => null);
         throw new Error(j?.error?.message || `HTTP ${res.status}`);
@@ -103,19 +113,28 @@ export default function ChatPage() {
 
         buffer += decoder.decode(value, { stream: true });
 
+        // SSE messages separated by \n\n
         const parts = buffer.split("\n\n");
         buffer = parts.pop() || "";
 
         for (const part of parts) {
-          const lines = part.split("\n").map((l) => l.trim());
-          const ev =
-            lines.find((l) => l.startsWith("event:"))?.replace("event:", "").trim() || "";
-          const dataLines = lines
-            .filter((l) => l.startsWith("data:"))
-            .map((l) => l.replace("data:", "").trim());
-          const data = dataLines.join("\n");
+          const lines = part.split("\n"); // ❌ NO trim (recipe formatting depends on spaces/newlines)
+          let ev = "";
+          const dataLines: string[] = [];
+
+          for (const line of lines) {
+            if (line.startsWith("event:")) {
+              ev = line.slice(6).trim(); // ok to trim just the event name
+            } else if (line.startsWith("data:")) {
+              // SSE often has one optional space after "data:"
+              const rest = line.slice(5);
+              dataLines.push(rest.startsWith(" ") ? rest.slice(1) : rest);
+            }
+          }
 
           if (!ev) continue;
+
+          const data = dataLines.join("\n"); // ❌ NO trim
 
           if (ev === "token") {
             appendToPending(pendingId, data);
@@ -174,16 +193,18 @@ export default function ChatPage() {
             {messages.map((m) => {
               const isUser = m.role === "user";
 
-              // ✅ این خط کلیدی است: چیدمان را مستقل از RTL/LTR نگه می‌داریم
+              // ✅ FIX اصلی: این container همیشه LTR باشد تا flex-start/end ثابت بماند
               const rowStyle: React.CSSProperties = {
+                direction: "ltr",
                 display: "flex",
+                width: "100%",
                 justifyContent: isUser ? "flex-end" : "flex-start",
               };
 
               return (
                 <div key={m.id} style={rowStyle}>
-                  <div style={{ ...bubble, background: isUser ? "#ffffff" : "#ffffff" }}>
-                    {/* ✅ فقط متن داخل bubble “auto” باشد (نه خود bubble) */}
+                  <div style={bubble}>
+                    {/* ✅ متن داخل bubble با auto (bidi درست برای فارسی+انگلیسی/URL/عدد) */}
                     <bdi
                       dir="auto"
                       style={{
@@ -262,6 +283,7 @@ const bubble: React.CSSProperties = {
   padding: "10px 12px",
   borderRadius: 14,
   border: "1px solid #e2e8f0",
+  background: "#ffffff",
   color: "#0f172a",
   lineHeight: 1.5,
 };
