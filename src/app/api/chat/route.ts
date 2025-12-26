@@ -14,238 +14,167 @@ export const dynamic = "force-dynamic";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5-mini";
 
-const LLM_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS || 20_000);
-const LLM_TIMEOUT_RECIPE_MS = Number(process.env.LLM_TIMEOUT_RECIPE_MS || 35_000);
+const LLM_TIMEOUT_MS = 30_000;
+const LLM_TIMEOUT_RECIPE_MS = 45_000;
 
-// gpt-5-mini: use max_completion_tokens (NOT max_tokens)
-const MAX_TOKENS_DEFAULT = Number(process.env.LLM_MAX_TOKENS || 550);
-const MAX_TOKENS_RECIPE = Number(process.env.LLM_MAX_TOKENS_RECIPE || 700);
+const MAX_TOKENS_DEFAULT = 600;
+const MAX_TOKENS_RECIPE = 900;
 
 type ChatMode = "medical" | "therapy" | "recipe";
-type Lang = "fa" | "ar" | "he" | "en";
-
-function detectLang(text: string): Lang {
-  // Hebrew
-  if (/[\u0590-\u05FF]/.test(text)) return "he";
-  // Arabic script (includes Persian/Urdu, etc)
-  if (/[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]/.test(text)) {
-    // Persian-specific letters: پ چ ژ گ ک ی (Arabic yeh/keheh variants included)
-    if (/[پچژگ]/.test(text) || /[\u06A9\u06CC]/.test(text)) return "fa";
-    return "ar";
-  }
-  return "en";
-}
+type Lang = "en" | "fa" | "ar" | "he";
 
 function isRtl(lang: Lang) {
   return lang === "fa" || lang === "ar" || lang === "he";
 }
 
 /**
- * "Smart enough" Persian normalization:
- * - normalize Arabic variants to Persian where helpful
- * - add spaces after punctuation
- * - insert ZWNJ for common patterns: می + verb, ها/های, ترین/تر
- * NOTE: This is heuristic (won’t be perfect), but fixes the “چسبیدن” problem a lot.
+ * Heuristic:
+ * - Hebrew range => he
+ * - Arabic-script => fa by default (to satisfy Persian users)
+ *   unless we see Arabic-specific letters/diacritics => ar
  */
-function normalizeFa(text: string) {
-  let s = text;
+function detectLang(text: string): Lang {
+  // Hebrew
+  if (/[\u0590-\u05FF]/.test(text)) return "he";
 
-  // normalize Arabic chars to Persian
-  s = s.replace(/ي/g, "ی").replace(/ك/g, "ک");
+  // Arabic script (includes Persian/Urdu, etc)
+  if (/[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]/.test(text)) {
+    // Arabic-ish letters/marks more common in Arabic than Persian
+    const arabicOnly = /[ةؤئأإءًٌٍَُِّٰ]/;
+    if (arabicOnly.test(text)) return "ar";
+    return "fa";
+  }
 
-  // standardize punctuation spacing (very conservative)
-  s = s
+  return "en";
+}
+
+function normalizeFa(s: string) {
+  // normalize Arabic yeh/kaf to Persian, add spacing after punctuation, collapse whitespace
+  return s
+    .replace(/ي/g, "ی")
+    .replace(/ك/g, "ک")
     .replace(/([،؛:!?؟])(?=\S)/g, "$1 ")
     .replace(/\s{2,}/g, " ");
-
-  // ZWNJ rules (heuristics)
-  // می‌روم / نمی‌روم
-  s = s.replace(/\b(ن?می)\s+([اآبپتثجچحخدذرزژسشصضطظعغفقکگلمنوهی])/g, "$1\u200C$2");
-
-  // ها / های
-  s = s.replace(/(\S)\s+(ها|های)\b/g, "$1\u200C$2");
-
-  // تر / ترین
-  s = s.replace(/(\S)\s+(تر|ترین)\b/g, "$1\u200C$2");
-
-  return s.trim();
 }
 
 function disclaimer(mode: ChatMode, lang: Lang) {
   if (mode === "therapy") {
-    if (lang === "fa") return "من درمانگر نیستم. اگر در خطر هستید یا به خودآسیبی فکر می‌کنید، فوراً با اورژانس یا یک فرد مورد اعتماد تماس بگیرید.";
-    if (lang === "ar") return "أنا لستُ معالجًا. إذا كنتَ في خطر أو تفكّر بإيذاء نفسك، اتصل بالطوارئ أو بشخص موثوق فورًا.";
-    if (lang === "he") return "אני לא מטפל מוסמך. אם אתה בסכנה או חושב על פגיעה בעצמך, פנה מיד לשירותי חירום או לאדם מהימן.";
-    return "I’m not a licensed therapist. If you’re in danger or thinking about self-harm, contact local emergency services or a trusted person right now.";
+    return lang === "fa"
+      ? "یادآوری: من درمانگر یا متخصص مجاز نیستم. اگر احساس خطر فوری داری با اورژانس/خدمات اضطراری تماس بگیر."
+      : "Reminder: I’m not a licensed clinician. If you’re in immediate danger, contact emergency services.";
   }
-
   if (mode === "medical") {
-    if (lang === "fa") return "من پزشک نیستم. این اطلاعات عمومی است و جایگزین تشخیص پزشکی نیست. اگر علائم شدید/بدترشونده دارید، به پزشک مراجعه کنید.";
-    if (lang === "ar") return "أنا لستُ طبيبًا. هذه معلومات عامة وليست تشخيصًا. إذا كانت الأعراض شديدة أو تتفاقم، راجع طبيبًا.";
-    if (lang === "he") return "אני לא רופא. זהו מידע כללי ולא אבחנה. אם התסמינים חמורים/מחמירים, פנה לרופא.";
-    return "I’m not a doctor. This is general information, not a diagnosis. If symptoms are severe, worsening, or you’re worried, seek medical care.";
+    return lang === "fa"
+      ? "یادآوری: این اطلاعات جایگزین نظر پزشک نیست. اگر وضعیت اورژانسی است فوراً به اورژانس مراجعه کن."
+      : "Reminder: This isn’t medical advice. If this is an emergency, seek urgent care.";
   }
-
   return "";
 }
 
 function systemPrompt(mode: ChatMode, lang: Lang) {
-  const rtlLine = isRtl(lang)
-    ? "IMPORTANT: The user writes in a right-to-left language. Respond in the user's language and keep correct spacing. Do not remove spaces between words."
-    : "";
-
-  if (mode === "recipe") {
-    if (lang === "fa") {
-      return [
-        rtlLine,
-        "در تمام پاسخ‌های فارسی، فاصله‌گذاری و نیم‌فاصله را خوانا و استاندارد رعایت کن.",
-        "شما یک دستیار رسپیِ عملی هستید.",
-        "فقط «یک» رسپیِ مناسبِ پیام کاربر بده (نه چند گزینه).",
-        "قالب دقیق:",
-        "1) عنوان",
-        "2) مواد لازم (بولت)",
-        "3) مراحل (شماره‌دار، حداکثر ۷ مرحله)",
-        "4) زمان (آماده‌سازی/پخت/کل)",
-        "5) کالری تقریبی",
-        "کوتاه و کاربردی بنویس.",
-      ].join("\n");
-    }
-    if (lang === "ar") {
-      return [
-        rtlLine,
-        "اكتب بالعربية وبمسافات صحيحة بين الكلمات.",
-        "أنت مساعد وصفات عملي.",
-        "قدّم وصفة واحدة مناسبة لرسالة المستخدم.",
-        "التنسيق:",
-        "1) العنوان",
-        "2) المكوّنات (نقاط)",
-        "3) الخطوات (مرقّمة، بحد أقصى 7)",
-        "4) الوقت",
-        "5) السعرات التقريبية",
-        "اجعلها قصيرة وعملية.",
-      ].join("\n");
-    }
-    if (lang === "he") {
-      return [
-        rtlLine,
-        "כתוב בעברית עם ריווח תקין בין מילים.",
-        "אתה עוזר מתכונים פרקטי.",
-        "תן מתכון אחד שמתאים להודעת המשתמש.",
-        "פורמט:",
-        "1) כותרת",
-        "2) מרכיבים (נקודות)",
-        "3) שלבים (ממוספרים, עד 7)",
-        "4) זמן",
-        "5) קלוריות משוערות",
-        "קצר ומעשי.",
-      ].join("\n");
-    }
-    return [
-      "You are a practical recipe assistant.",
-      "Return ONE best recipe tailored to the user’s message.",
-      "Format:",
-      "1) Title",
-      "2) Ingredients (bullets)",
-      "3) Steps (numbered, max 7)",
-      "4) Time (prep/cook/total)",
-      "5) Estimated calories",
-      "Keep it short and practical.",
-    ].join("\n");
-  }
+  const base =
+    lang === "fa"
+      ? "پاسخ را به فارسی روان بده. مختصر، دقیق، و کاربردی."
+      : lang === "ar"
+      ? "أجب باللغة العربية. كن موجزًا ودقيقًا وعمليًا."
+      : lang === "he"
+      ? "ענה בעברית. היה/י תמציתי/ת, מדויק/ת ומעשי/ת."
+      : "Answer in English. Be concise, accurate, and practical.";
 
   if (mode === "therapy") {
-    if (lang === "fa") {
-      return [
-        rtlLine,
-        "در تمام پاسخ‌های فارسی، فاصله‌گذاری و نیم‌فاصله را خوانا و استاندارد رعایت کن.",
-        "تو یک دستیار حمایتی با لحن درمانی هستی.",
-        "ادعای درمانگر/روانشناس بودن نکن.",
-        "همدل، کوتاه، و در صورت نیاز ۱–۲ سؤال پیگیری بپرس.",
-        "اگر نشانه‌های بحران/خودآسیبی بود، توصیه کن با اورژانس یا فرد مورد اعتماد تماس بگیرند.",
-      ].join("\n");
-    }
-    if (lang === "ar") {
-      return [
-        rtlLine,
-        "اكتب بالعربية وبمسافات صحيحة بين الكلمات.",
-        "أنت مساعد داعم بأسلوب علاجي.",
-        "لا تدّعِ أنك معالج مرخّص.",
-        "كن متعاطفًا ومختصرًا، واسأل 1–2 سؤال متابعة عند الحاجة.",
-        "عند إشارات الأزمة/إيذاء النفس: أوصِ بالطوارئ أو شخص موثوق.",
-      ].join("\n");
-    }
-    if (lang === "he") {
-      return [
-        rtlLine,
-        "כתוב בעברית עם ריווח תקין בין מילים.",
-        "אתה עוזר תומך בסגנון טיפולי.",
-        "אל תטען שאתה מטפל מוסמך.",
-        "היה אמפתי וקצר, ושאל 1–2 שאלות המשך כשצריך.",
-        "אם יש סימני משבר/פגיעה עצמית: המלץ לפנות לחירום או לאדם מהימן.",
-      ].join("\n");
-    }
     return [
+      base,
       "You are a supportive, non-judgmental therapy-style assistant.",
       "Do not claim to be a licensed clinician.",
-      "Keep it empathetic and concise. Ask 1-2 gentle follow-ups when useful.",
-      "If self-harm/crisis is mentioned, recommend contacting local emergency services or a trusted person.",
-    ].join("\n");
+      "Ask 1-2 gentle follow-up questions when helpful.",
+      "Include a brief safety disclaimer if relevant.",
+    ].join(" ");
+  }
+
+  if (mode === "recipe") {
+    return [
+      base,
+      "You are a nutrition-minded recipe assistant.",
+      "Return 3 recipe options with: ingredients, steps, estimated calories, protein/carbs/fat.",
+      "Ask for allergies/diet preference if missing.",
+      "Keep formatting clean with line breaks and bullets.",
+    ].join(" ");
   }
 
   // medical
-  if (lang === "fa") {
-    return [
-      rtlLine,
-      "در تمام پاسخ‌های فارسی، فاصله‌گذاری و نیم‌فاصله را خوانا و استاندارد رعایت کن.",
-      "درود! چطور می‌توانم کمکتان کنم؟",
-      "",
-      "اگر سؤال پزشکی دارید، لطفاً بگویید:",
-      "- چه علائمی دارید و از کی شروع شده؟",
-      "- سن و هر سابقه پزشکی یا دارویی مهمی دارید؟",
-      "",
-      "قوانین: تشخیص قطعی نده. سؤال‌های کوتاه برای روشن شدن وضعیت بپرس. علائم هشدار را بگو.",
-    ].join("\n");
-  }
-  if (lang === "ar") {
-    return [
-      rtlLine,
-      "اكتب بالعربية وبمسافات صحيحة بين الكلمات.",
-      "مرحبًا! كيف يمكنني مساعدتك؟",
-      "إذا كان لديك سؤال طبي، اذكر:",
-      "- ما الأعراض ومتى بدأت؟",
-      "- العمر وأي تاريخ مرضي/أدوية مهمة؟",
-      "قواعد: لا تقدّم تشخيصًا قاطعًا. اسأل أسئلة توضيحية قصيرة واذكر علامات الخطر.",
-    ].join("\n");
-  }
-  if (lang === "he") {
-    return [
-      rtlLine,
-      "כתוב בעברית עם ריווח תקין בין מילים.",
-      "שלום! איך אפשר לעזור?",
-      "אם יש שאלה רפואית, ציין:",
-      "- מה התסמינים וממתי התחילו?",
-      "- גיל והיסטוריה רפואית/תרופות חשובות?",
-      "כללים: אל תיתן אבחנה חד-משמעית. שאל שאלות הבהרה קצרות וציין דגלים אדומים.",
-    ].join("\n");
-  }
-
   return [
-    "You are a medical information assistant.",
-    "Do NOT provide a diagnosis. Ask short clarifying questions.",
-    "Provide safe, general guidance and red-flag symptoms requiring urgent care.",
-  ].join("\n");
+    base,
+    "You are a careful medical information assistant.",
+    "Do not diagnose. Provide possible explanations and safe next steps.",
+    "Include red flags that require urgent care.",
+  ].join(" ");
 }
 
 function sseEvent(event: string, data: string) {
-  const safe = data
-    .replace(/\r/g, "")
-    .split("\n")
-    .map((l) => `data: ${l}`)
-    .join("\n");
-  return `event: ${event}\n${safe}\n\n`;
+  return `event: ${event}\ndata: ${data}\n\n`;
 }
 
-async function openaiStream(opts: {
+async function fetchOpenAiJson(opts: {
+  mode: ChatMode;
+  lang: Lang;
+  message: string;
+  signal: AbortSignal;
+}) {
+  const { mode, lang, message, signal } = opts;
+
+  if (!OPENAI_API_KEY) throw new AppError("LLM_MISCONFIG", "OPENAI_API_KEY missing", 500);
+
+  const timeoutMs = mode === "recipe" ? LLM_TIMEOUT_RECIPE_MS : LLM_TIMEOUT_MS;
+  const maxTokens = mode === "recipe" ? MAX_TOKENS_RECIPE : MAX_TOKENS_DEFAULT;
+
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  signal.addEventListener("abort", abort);
+
+  const t = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: OPENAI_MODEL,
+        stream: false,
+        max_tokens: maxTokens,
+        messages: [
+          { role: "system", content: systemPrompt(mode, lang) },
+          { role: "user", content: message },
+        ],
+      }),
+    });
+
+    if (!res.ok) {
+      const txt = await res.text().catch(() => "");
+      throw new AppError("LLM_ERROR", `OpenAI error: ${res.status} ${txt}`.slice(0, 700), 502);
+    }
+
+    const json: any = await res.json();
+    const content = json?.choices?.[0]?.message?.content ?? "";
+
+    const final = lang === "fa" ? normalizeFa(String(content)) : String(content).trim();
+    return { answer: final, disclaimer: disclaimer(mode, lang) };
+  } catch (e: any) {
+    if (e?.name === "AbortError") {
+      throw new AppError("LLM_TIMEOUT", "LLM request timed out", 504);
+    }
+    if (e instanceof AppError) throw e;
+    throw new AppError("LLM_ERROR", "LLM request failed", 502);
+  } finally {
+    clearTimeout(t);
+    signal.removeEventListener("abort", abort);
+  }
+}
+
+async function fetchOpenAiStream(opts: {
   mode: ChatMode;
   lang: Lang;
   message: string;
@@ -276,7 +205,7 @@ async function openaiStream(opts: {
       body: JSON.stringify({
         model: OPENAI_MODEL,
         stream: true,
-        max_completion_tokens: maxTokens,
+        max_tokens: maxTokens,
         messages: [
           { role: "system", content: systemPrompt(mode, lang) },
           { role: "user", content: message },
@@ -304,10 +233,7 @@ async function openaiStream(opts: {
       const parts = buffer.split("\n\n");
       buffer = parts.pop() || "";
 
-      for (const part of parts) {
-        const block = part.trim();
-        if (!block) continue;
-
+      for (const block of parts) {
         const dataLine = block.split("\n").find((l) => l.startsWith("data:"));
         if (!dataLine) continue;
 
@@ -322,7 +248,6 @@ async function openaiStream(opts: {
           const delta = json?.choices?.[0]?.delta?.content ?? "";
           if (delta) {
             full += delta;
-            // NOTE: stream tokens raw to avoid breaking incremental rendering
             onToken(delta);
           }
         } catch {
@@ -345,6 +270,19 @@ async function openaiStream(opts: {
   }
 }
 
+export async function GET() {
+  try {
+    const user = await getAuthedUser();
+    const messages = await listRecentMessages(user.id, 50);
+    return ok({ messages });
+  } catch (e: any) {
+    if (e?.code === "UNAUTHENTICATED") {
+      return fail(new AppError("UNAUTHENTICATED", "Please login", 401));
+    }
+    return fail(new AppError("SERVER_ERROR", "Failed to load messages", 500));
+  }
+}
+
 export async function POST(req: Request) {
   try {
     const user = await getAuthedUser();
@@ -364,15 +302,15 @@ export async function POST(req: Request) {
       req.headers.get("accept")?.includes("text/event-stream") === true;
 
     if (!wantStream) {
+      // ✅ JSON-only stable path
       await prisma.chatMessage.create({
         data: { userId: user.id, role: "user", mode, content: message },
       });
 
-      const result = await openaiStream({
+      const result = await fetchOpenAiJson({
         mode,
         lang,
         message,
-        onToken: () => {},
         signal: new AbortController().signal,
       });
 
@@ -389,27 +327,16 @@ export async function POST(req: Request) {
       });
     }
 
+    // ✅ SSE path (optional)
+    const encoder = new TextEncoder();
+    const aborter = new AbortController();
+
     await prisma.chatMessage.create({
       data: { userId: user.id, role: "user", mode, content: message },
     });
 
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
-        const encoder = new TextEncoder();
-        const aborter = new AbortController();
-
-        const onAbort = () => {
-          try {
-            controller.enqueue(encoder.encode(sseEvent("error", "Client disconnected")));
-          } catch {}
-          try {
-            controller.close();
-          } catch {}
-          aborter.abort();
-        };
-
-        req.signal.addEventListener("abort", onAbort);
-
         (async () => {
           let fullAnswer = "";
 
@@ -420,20 +347,22 @@ export async function POST(req: Request) {
               )
             );
 
-            const result = await openaiStream({
+            const result = await fetchOpenAiStream({
               mode,
               lang,
               message,
               signal: aborter.signal,
               onToken: (t) => {
+                if (!t) return;
                 fullAnswer += t;
                 controller.enqueue(encoder.encode(sseEvent("token", t)));
               },
             });
 
-            // Save normalized final answer (especially for fa)
+            const final = lang === "fa" ? normalizeFa(fullAnswer) : fullAnswer.trim();
+
             await prisma.chatMessage.create({
-              data: { userId: user.id, role: "assistant", mode, content: result.answer },
+              data: { userId: user.id, role: "assistant", mode, content: final },
             });
 
             controller.enqueue(
@@ -444,86 +373,37 @@ export async function POST(req: Request) {
                     mode,
                     lang,
                     dir: isRtl(lang) ? "rtl" : "ltr",
-                    answer: result.answer,
+                    answer: final,
                     disclaimer: result.disclaimer || "",
                   })
                 )
               )
             );
-            controller.close();
           } catch (e: any) {
-            const msg =
-              e instanceof AppError ? `${e.code}: ${e.message}` : "SERVER_ERROR: Something went wrong";
-
-            const safe =
-              mode === "medical"
-                ? (lang === "fa"
-                    ? "الان مشکل دارم. اگر وضعیت اورژانسی است، لطفاً با اورژانس/پزشک تماس بگیرید."
-                    : lang === "ar"
-                      ? "أواجه مشكلة الآن. إذا كانت الحالة طارئة، تواصل مع الطوارئ/طبيب."
-                      : lang === "he"
-                        ? "יש בעיה כרגע. אם זה דחוף, פנה לחירום/רופא."
-                        : "I’m having trouble right now. If this is urgent, contact emergency services or a clinician.")
-                : (lang === "fa"
-                    ? "الان مشکل دارم. لطفاً کمی بعد دوباره امتحان کنید."
-                    : lang === "ar"
-                      ? "هناك مشكلة الآن. حاول مرة أخرى بعد قليل."
-                      : lang === "he"
-                        ? "יש בעיה כרגע. נסה שוב בעוד רגע."
-                        : "I’m having trouble right now. Please try again in a moment.");
-
-            try {
-              await prisma.chatMessage.create({
-                data: { userId: user.id, role: "assistant", mode, content: safe },
-              });
-            } catch {}
-
-            try {
-              controller.enqueue(encoder.encode(sseEvent("error", msg)));
-            } catch {}
-            try {
-              controller.close();
-            } catch {}
+            const msg = e?.message ? String(e.message) : "Stream error";
+            controller.enqueue(encoder.encode(sseEvent("error", msg)));
           } finally {
-            req.signal.removeEventListener("abort", onAbort);
+            controller.close();
           }
         })();
+      },
+      cancel() {
+        aborter.abort();
       },
     });
 
     return new Response(stream, {
       headers: {
         "Content-Type": "text/event-stream; charset=utf-8",
-        "Cache-Control": "no-store, no-transform",
+        "Cache-Control": "no-cache, no-transform",
         Connection: "keep-alive",
       },
     });
   } catch (e: any) {
-    if (e?.name === "ZodError") {
-      return fail("INVALID_INPUT", "Invalid input", 400, e.flatten?.());
-    }
     if (e instanceof AppError) {
-      if (e.code === "RATE_LIMITED") return failRateLimited(e);
-      return fail(e.code, e.message, e.status, (e as any).extra);
+      if (e.code === "RATE_LIMIT") return failRateLimited(e);
+      return fail(e);
     }
-    return fail("SERVER_ERROR", "Something went wrong", 500);
-  }
-}
-
-export async function GET(req: Request) {
-  try {
-    const user = await getAuthedUser();
-    const ip = getClientIp(req);
-
-    rateLimitOrThrow(`chat:list:${user.id}:${ip}`, 60, 60_000);
-
-    const messages = await listRecentMessages(user.id, 30);
-    return ok({ messages });
-  } catch (e: any) {
-    if (e instanceof AppError) {
-      if (e.code === "RATE_LIMITED") return failRateLimited(e);
-      return fail(e.code, e.message, e.status, (e as any).extra);
-    }
-    return fail("SERVER_ERROR", "Something went wrong", 500);
+    return fail(new AppError("SERVER_ERROR", "Unexpected error", 500));
   }
 }
