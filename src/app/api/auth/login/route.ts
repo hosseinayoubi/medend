@@ -1,23 +1,14 @@
-import { ok, fail } from "@/lib/response";
-import { AppError } from "@/lib/errors";
-import { loginSchema } from "@/validators/auth.schema";
-import { loginUser } from "@/services/auth.service";
-import { createSession } from "@/lib/auth";
-import { rateLimitOrThrow } from "@/lib/rate-limit";
-import { getClientIp } from "@/lib/ip";
-import { failRateLimited } from "@/lib/http-errors";
+export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
   try {
     const ip = getClientIp(req);
 
-    // 10 req/min per IP
     rateLimitOrThrow(`auth:login:ip:${ip}`, 10, 60_000);
 
     const body = loginSchema.parse(await req.json());
     const email = body.email.toLowerCase();
 
-    // 10 req/min per email
     rateLimitOrThrow(`auth:login:email:${email}`, 10, 60_000);
 
     const user = await loginUser(email, body.password);
@@ -28,10 +19,15 @@ export async function POST(req: Request) {
     if (e?.name === "ZodError") {
       return fail("INVALID_INPUT", "Invalid input", 400, e.flatten?.());
     }
+
     if (e instanceof AppError) {
       if (e.code === "RATE_LIMITED") return failRateLimited(e);
-      return fail(e.code, e.message, e.status, (e as any).extra);
+
+      // ✅ جلوگیری از enumeration: همه خطاهای لاگین را یکسان کن
+      // (در سرور می‌تونی log کنی، ولی به کلاینت یکی برگردون)
+      return fail("INVALID_CREDENTIALS", "Invalid email or password", 401);
     }
+
     return fail("SERVER_ERROR", "Something went wrong", 500);
   }
 }
