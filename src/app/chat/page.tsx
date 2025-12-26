@@ -11,51 +11,6 @@ function uid(prefix = "m") {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-/** Project's current 20 langs (based on /public/locales/*.js) */
-type Lang =
-  | "en"
-  | "fa"
-  | "ar"
-  | "he"
-  | "tr"
-  | "de"
-  | "fr"
-  | "es"
-  | "it"
-  | "pt"
-  | "ru"
-  | "sv"
-  | "fi"
-  | "nl"
-  | "ja"
-  | "hi"
-  | "pl"
-  | "uk"
-  | "ur"
-  | "zh";
-
-const DEFAULT_LANG: Lang = "en";
-const RTL_LANGS = new Set<Lang>(["fa", "ar", "he", "ur"]);
-
-function getCookie(name: string) {
-  if (typeof document === "undefined") return "";
-  const m = document.cookie.match(
-    new RegExp("(?:^|; )" + name.replace(/[.$?*|{}()[\]\\/+^]/g, "\\$&") + "=([^;]*)")
-  );
-  return m ? decodeURIComponent(m[1]) : "";
-}
-
-function detectUiLang(): Lang {
-  // priority: localStorage -> cookie -> default
-  try {
-    const v = (localStorage.getItem("language") || "").toLowerCase();
-    if (v) return v as Lang;
-  } catch {}
-  const c = (getCookie("lang") || "").toLowerCase();
-  if (c) return c as Lang;
-  return DEFAULT_LANG;
-}
-
 export default function ChatPage() {
   const [mode, setMode] = useState<Mode>("medical");
   const [input, setInput] = useState("");
@@ -63,10 +18,6 @@ export default function ChatPage() {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  // UI lang/dir (for fonts + overall direction)
-  const [uiLang, setUiLang] = useState<Lang>(DEFAULT_LANG);
-  const uiDir: "rtl" | "ltr" = RTL_LANGS.has(uiLang) ? "rtl" : "ltr";
 
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
@@ -76,22 +27,7 @@ export default function ChatPage() {
     return "Recipe";
   }, [mode]);
 
-  function appendToPending(pendingId: string, chunk: string) {
-    setMessages((prev) =>
-      prev.map((m) => (m.id === pendingId ? { ...m, content: (m.content || "") + chunk } : m))
-    );
-  }
-
   useEffect(() => {
-    // Apply UI lang/dir to <html> so fonts (lang selectors) + direction behave consistently
-    const l = detectUiLang();
-    setUiLang(l);
-
-    try {
-      document.documentElement.lang = l;
-      document.documentElement.dir = RTL_LANGS.has(l) ? "rtl" : "ltr";
-    } catch {}
-
     (async () => {
       const ok = await requireAuth();
       if (!ok) return;
@@ -109,7 +45,6 @@ export default function ChatPage() {
           })) as Msg[];
           setMessages(serverMsgs);
         }
-      } catch {
       } finally {
         setLoading(false);
       }
@@ -119,6 +54,12 @@ export default function ChatPage() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, sending]);
+
+  function appendToPending(pendingId: string, chunk: string) {
+    setMessages((prev) =>
+      prev.map((m) => (m.id === pendingId ? { ...m, content: (m.content || "") + chunk } : m))
+    );
+  }
 
   async function send() {
     if (sending) return;
@@ -162,7 +103,6 @@ export default function ChatPage() {
 
         buffer += decoder.decode(value, { stream: true });
 
-        // SSE messages separated by \n\n
         const parts = buffer.split("\n\n");
         buffer = parts.pop() || "";
 
@@ -178,44 +118,29 @@ export default function ChatPage() {
           if (!ev) continue;
 
           if (ev === "token") {
-            // backend sends raw text chunk (not JSON)
             appendToPending(pendingId, data);
-          } else if (ev === "meta") {
-            // optional: backend may send {mode, lang, dir}
-            // we don't need it for BIDI fix, but keep safe parsing:
-            // const payload = JSON.parse(data);
-            // console.log(payload);
           } else if (ev === "error") {
             throw new Error(data || "Stream error");
           }
         }
       }
 
-      // If stream ended with empty output:
       setMessages((prev) =>
         prev.map((m) => (m.id === pendingId && !m.content ? { ...m, content: "No response." } : m))
       );
     } catch (e: any) {
-      setMessages((prev) =>
-        prev.map((m) => (m.id === pendingId ? { ...m, content: "" } : m))
-      );
-
-      const msg = String(e?.message || "");
-      if (msg.toLowerCase().includes("timeout") || msg.toLowerCase().includes("timed out")) {
-        setError("Model is taking too long. Please try again.");
-      } else {
-        setError(msg || "Could not send. Try again.");
-      }
+      setMessages((prev) => prev.filter((m) => m.id !== pendingId));
+      setError(String(e?.message || "Could not send. Try again."));
     } finally {
       setSending(false);
     }
   }
 
   return (
-    <Shell lang={uiLang} dir={uiDir}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+    <main style={shell}>
+      <div style={topRow}>
         <div>
-          <div style={{ fontSize: 18, fontWeight: 700, color: "#0f172a" }}>Chat</div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: "#0f172a" }}>Chat</div>
           <div style={{ fontSize: 12, color: "#64748b" }}>{headerLabel} mode</div>
         </div>
 
@@ -225,14 +150,13 @@ export default function ChatPage() {
             onChange={(e) => setMode(e.target.value as Mode)}
             style={select}
             disabled={sending}
-            aria-label="mode"
           >
             <option value="medical">Medical</option>
             <option value="therapy">Therapy</option>
             <option value="recipe">Recipe</option>
           </select>
 
-          <Link href="/account" style={linkBtn}>
+          <Link href="/account" style={btn}>
             Account
           </Link>
         </div>
@@ -247,34 +171,36 @@ export default function ChatPage() {
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {messages.map((m) => (
-              <div
-                key={m.id}
-                style={{
-                  alignSelf: m.role === "user" ? "flex-end" : "flex-start",
-                  maxWidth: "78%",
-                  padding: "10px 12px",
-                  borderRadius: 14,
-                  border: "1px solid #e2e8f0",
-                  background: "#fff",
-                  color: "#0f172a",
-                  lineHeight: 1.5,
-                  minHeight: m.role === "assistant" && sending && m.content === "" ? 22 : undefined,
+            {messages.map((m) => {
+              const isUser = m.role === "user";
 
-                  /* overflow fix even if CSS fails to load */
-                  overflowWrap: "anywhere",
-                  wordBreak: "break-word",
-                  whiteSpace: "pre-wrap",
-                  unicodeBidi: "plaintext",
-                }}
-                // THE KEY: let browser decide direction per message
-                dir="auto"
-                className="chatBubble"
-              >
-                {/* THE KEY: prevents bidi mixing (numbers/URLs/English inside Persian) */}
-                <bdi>{m.content || (m.role === "assistant" && sending ? "…" : "")}</bdi>
-              </div>
-            ))}
+              // ✅ این خط کلیدی است: چیدمان را مستقل از RTL/LTR نگه می‌داریم
+              const rowStyle: React.CSSProperties = {
+                display: "flex",
+                justifyContent: isUser ? "flex-end" : "flex-start",
+              };
+
+              return (
+                <div key={m.id} style={rowStyle}>
+                  <div style={{ ...bubble, background: isUser ? "#ffffff" : "#ffffff" }}>
+                    {/* ✅ فقط متن داخل bubble “auto” باشد (نه خود bubble) */}
+                    <bdi
+                      dir="auto"
+                      style={{
+                        unicodeBidi: "isolate",
+                        whiteSpace: "pre-wrap",
+                        overflowWrap: "anywhere",
+                        wordBreak: "break-word",
+                        textAlign: "start",
+                        display: "block",
+                      }}
+                    >
+                      {m.content || (m.role === "assistant" && sending ? "…" : "")}
+                    </bdi>
+                  </div>
+                </div>
+              );
+            })}
             <div ref={bottomRef} />
           </div>
         )}
@@ -292,51 +218,52 @@ export default function ChatPage() {
               send();
             }
           }}
-          placeholder="Write a message…"
-          style={{
-            ...textarea,
-            unicodeBidi: "plaintext",
-            overflowWrap: "anywhere",
-            wordBreak: "break-word",
-          }}
+          disabled={sending}
+          placeholder="Type your message…"
+          style={textarea}
           dir="auto"
-          lang={uiLang}
         />
 
-        <button onClick={send} disabled={sending} style={button}>
+        <button onClick={send} disabled={sending || !input.trim()} style={button}>
           {sending ? "Sending…" : "Send"}
         </button>
       </div>
-    </Shell>
+    </main>
   );
 }
 
-function Shell(props: { children: React.ReactNode; lang: string; dir: "rtl" | "ltr" }) {
-  return (
-    <div
-      lang={props.lang}
-      dir={props.dir}
-      style={{
-        maxWidth: 920,
-        margin: "30px auto",
-        padding: 16,
-        display: "flex",
-        flexDirection: "column",
-        gap: 12,
-      }}
-    >
-      {props.children}
-    </div>
-  );
-}
+const shell: React.CSSProperties = {
+  maxWidth: 920,
+  margin: "30px auto",
+  padding: 16,
+  display: "flex",
+  flexDirection: "column",
+  gap: 12,
+};
+
+const topRow: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 12,
+};
 
 const box: React.CSSProperties = {
   border: "1px solid #e2e8f0",
   borderRadius: 14,
   padding: 12,
-  minHeight: 380,
+  minHeight: 420,
   background: "#f8fafc",
   overflow: "hidden",
+};
+
+const bubble: React.CSSProperties = {
+  maxWidth: "78%",
+  padding: "10px 12px",
+  borderRadius: 14,
+  border: "1px solid #e2e8f0",
+  color: "#0f172a",
+  lineHeight: 1.5,
 };
 
 const textarea: React.CSSProperties = {
@@ -351,6 +278,9 @@ const textarea: React.CSSProperties = {
   background: "#fff",
   color: "#0f172a",
   lineHeight: 1.5,
+  overflowWrap: "anywhere",
+  wordBreak: "break-word",
+  whiteSpace: "pre-wrap",
 };
 
 const button: React.CSSProperties = {
@@ -359,7 +289,7 @@ const button: React.CSSProperties = {
   color: "#fff",
   borderRadius: 12,
   padding: "10px 14px",
-  fontWeight: 700,
+  fontWeight: 800,
   cursor: "pointer",
 };
 
@@ -372,14 +302,14 @@ const select: React.CSSProperties = {
   outline: "none",
 };
 
-const linkBtn: React.CSSProperties = {
+const btn: React.CSSProperties = {
   border: "1px solid #e2e8f0",
   background: "#fff",
   color: "#0f172a",
   borderRadius: 12,
   padding: "8px 10px",
   textDecoration: "none",
-  fontWeight: 700,
+  fontWeight: 800,
 };
 
 const alertError: React.CSSProperties = {
