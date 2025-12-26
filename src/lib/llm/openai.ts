@@ -4,7 +4,7 @@ import { AppError } from "@/lib/errors";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5-mini";
 
-// پیش‌فرض 20 ثانیه (قابل تنظیم در env)
+// پیش‌فرض 20 ثانیه
 const LLM_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS || 20_000);
 
 function sleep(ms: number) {
@@ -15,42 +15,40 @@ function isRetriableStatus(status: number) {
   return status === 429 || (status >= 500 && status <= 599);
 }
 
+/**
+ * Minimal OpenAI Chat Completions request via fetch.
+ * You can swap to the Responses API later without changing your app surface.
+ */
 function systemPrompt(mode: ChatMode) {
   if (mode === "therapy") {
     return [
       "You are a supportive, non-judgmental therapy-style assistant.",
       "Do not claim to be a licensed clinician.",
-      "Encourage safe, practical next steps. If self-harm or crisis is mentioned, recommend contacting local emergency services or a trusted person.",
-      "Keep it empathetic and concise.",
-    ].join("\n");
+      "Encourage safe, practical next steps, and suggest professional help if crisis signals appear.",
+      "Keep responses concise, warm, and ask 1-2 gentle follow-up questions.",
+      "Add a brief disclaimer at the end.",
+    ].join(" ");
   }
-
   if (mode === "recipe") {
     return [
-      "You are a helpful cooking assistant.",
-      "Return clear steps, ingredients, and time estimates.",
-      "If allergies/diet restrictions are mentioned, adapt accordingly.",
-      "Be concise and practical.",
-    ].join("\n");
+      "You are a nutrition-minded recipe assistant.",
+      "Return 3 recipe options with: ingredients, steps, estimated calories, protein/carbs/fat.",
+      "Ask for allergies/diet preference if missing.",
+      "Keep it practical and fast (15-30 min) unless user asks otherwise.",
+    ].join(" ");
   }
-
-  // medical
   return [
     "You are a medical information assistant.",
-    "Do NOT provide a diagnosis. Ask clarifying questions when needed.",
-    "Provide safe, general guidance and red-flag symptoms that require urgent care.",
-    "Keep it concise and structured.",
-  ].join("\n");
+    "You must not provide definitive diagnosis.",
+    "Ask clarifying questions, flag red-flag symptoms, advise seeking professional care when appropriate.",
+    "Keep it safe and include a disclaimer.",
+  ].join(" ");
 }
 
 function disclaimer(mode: ChatMode) {
-  if (mode === "therapy") {
-    return "I’m not a licensed therapist. If you’re in danger or thinking about self-harm, please contact local emergency services or a trusted person right now.";
-  }
-  if (mode === "medical") {
-    return "I’m not a doctor. This is general information, not a diagnosis. If symptoms are severe, worsening, or you’re worried, seek medical care.";
-  }
-  return "";
+  if (mode === "therapy") return "Not a substitute for professional mental health care.";
+  if (mode === "medical") return "This is not medical advice and does not replace a doctor.";
+  return undefined;
 }
 
 export const openaiProvider: LlmProvider = {
@@ -74,6 +72,7 @@ export const openaiProvider: LlmProvider = {
           },
           body: JSON.stringify({
             model: OPENAI_MODEL,
+            // NOTE: Do NOT send temperature for gpt-5-mini here.
             messages: [
               { role: "system", content: systemPrompt(mode) },
               { role: "user", content: message },
@@ -107,7 +106,6 @@ export const openaiProvider: LlmProvider = {
           throw new AppError("LLM_TIMEOUT", "LLM request timed out", 504);
         }
 
-        // retry فقط یک‌بار برای خطای شبکه‌ای/نامعلوم
         if (attempt === 0) {
           await sleep(250);
           continue;
