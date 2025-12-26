@@ -2,22 +2,26 @@
 
 :root {
   /* default (Latin) font stack */
-  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  --font-latin: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+  /* Arabic / Persian */
+  --font-arabic: "Noto Sans Arabic", ui-sans-serif, system-ui;
+  /* Hebrew */
+  --font-hebrew: "Noto Sans Hebrew", ui-sans-serif, system-ui;
+
+  color-scheme: light;
 }
 
-/* Persian / Arabic */
-:lang(fa),
-:lang(ar),
-:lang(ur) {
-  font-family: var(--font-vazir), var(--font-arabic), ui-sans-serif, system-ui, sans-serif;
+html,
+body {
+  height: 100%;
 }
 
-/* Hebrew */
-:lang(he) {
-  font-family: var(--font-hebrew), ui-sans-serif, system-ui, sans-serif;
+body {
+  margin: 0;
+  font-family: var(--font-latin);
 }
 
-/* Utility helpers */
+/* Language direction helpers */
 .rtl {
   direction: rtl;
   text-align: right;
@@ -26,21 +30,4 @@
 .ltr {
   direction: ltr;
   text-align: left;
-}
-
-/* =========================================
-   Chat text (BIDI + overflow fixes)
-   ========================================= */
-
-.chatBubble {
-  max-width: 100%;
-  white-space: pre-wrap;     /* keep new lines */
-  overflow-wrap: anywhere;   /* break long URLs / words */
-  word-break: break-word;    /* fallback */
-  unicode-bidi: plaintext;   /* IMPORTANT: fixes mixed RTL/LTR order */
-}
-
-.chatBubble a {
-  overflow-wrap: anywhere;
-  word-break: break-word;
 }
