@@ -1,50 +1,46 @@
 import { ok, fail } from "@/lib/response";
 import { AppError } from "@/lib/errors";
 import { getAuthedUser } from "@/lib/auth";
-import { prisma } from "@/lib/prisma";
-import { intakeSchema } from "@/validators/intake.schema";
+import { prisma } from "@/lib/db";
+import { rateLimitOrThrow } from "@/lib/rate-limit";
+import { z } from "zod";
+import { updateJournalFromQuestionnaire } from "@/services/journal.service";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
+const intakeSchema = z.record(z.string(), z.any());
 
 export async function GET() {
   try {
-    const user = await getAuthedUser(); // ✅ FIX
-    if (!user) return fail("UNAUTHENTICATED", "Please login", 401);
+    const user = await getAuthedUser();
+    rateLimitOrThrow(`intake:get:${user.id}`, 60, 60_000);
 
-    // اگر مدل Intake در پروژه‌ات اسمش فرق دارد، اینجا را اصلاح کن
-    const intake = await prisma.intake.findUnique({
-      where: { userId: user.id },
-    });
-
-    return ok({ intake });
+    const existing = await prisma.questionnaireResponse.findUnique({ where: { userId: user.id } });
+    return ok({ data: existing?.data ?? null });
   } catch (e: any) {
-    if (e instanceof AppError) return fail(e.code, e.message, e.status, (e as any).extra);
+    if (e instanceof AppError) return fail(e.code, e.message, e.status);
     return fail("SERVER_ERROR", "Something went wrong", 500);
   }
 }
 
 export async function POST(req: Request) {
   try {
-    const user = await getAuthedUser(); // ✅ FIX
-    if (!user) return fail("UNAUTHENTICATED", "Please login", 401);
+    const user = await getAuthedUser();
+    rateLimitOrThrow(`intake:post:${user.id}`, 30, 60_000);
 
-    const body = await req.json().catch(() => ({}));
-    const parsed = intakeSchema.safeParse(body);
-    if (!parsed.success) {
-      return fail("INVALID_INPUT", "Invalid input", 400, parsed.error.flatten?.());
-    }
+    const data = intakeSchema.parse(await req.json());
 
-    const saved = await prisma.intake.upsert({
+    const saved = await prisma.questionnaireResponse.upsert({
       where: { userId: user.id },
-      create: { userId: user.id, ...parsed.data },
-      update: { ...parsed.data },
+      create: { userId: user.id, data, updatedAt: new Date() },
+      update: { data, updatedAt: new Date() },
     });
 
-    return ok({ intake: saved });
+    // sync journal snapshot
+    await updateJournalFromQuestionnaire(user.id, data).catch(() => {});
+
+    return ok({ data: saved.data });
   } catch (e: any) {
     if (e?.name === "ZodError") return fail("INVALID_INPUT", "Invalid input", 400, e.flatten?.());
-    if (e instanceof AppError) return fail(e.code, e.message, e.status, (e as any).extra);
+    if (e instanceof AppError) return fail(e.code, e.message, e.status);
     return fail("SERVER_ERROR", "Something went wrong", 500);
   }
 }
