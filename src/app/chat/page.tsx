@@ -33,7 +33,7 @@ export default function ChatPage() {
       if (!ok) return;
 
       try {
-        const res = await fetch("/api/chat", { cache: "no-store" });
+        const res = await fetch("/api/chat/", { cache: "no-store" });
         const json = await res.json().catch(() => null);
 
         if (res.ok && json?.ok?.messages) {
