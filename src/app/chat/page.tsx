@@ -33,12 +33,12 @@ export default function ChatPage() {
       if (!ok) return;
 
       try {
-        // ✅ IMPORTANT: no trailing slash (prevents 404/rewrites issues under i18n paths)
         const res = await fetch("/api/chat", { cache: "no-store" });
         const json = await res.json().catch(() => null);
 
-        if (res.ok && json?.ok?.messages) {
-          const serverMsgs = (json.ok.messages as any[]).map((m: any) => ({
+        // ✅ درستش: response helper ما { ok: true, data: {...} } هست
+        if (res.ok && json?.ok === true && json?.data?.messages) {
+          const serverMsgs = (json.data.messages as any[]).map((m: any) => ({
             id: m.id || uid("srv"),
             role: m.role,
             content: m.content,
@@ -55,12 +55,6 @@ export default function ChatPage() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, sending]);
-
-  function appendToPending(pendingId: string, chunk: string) {
-    setMessages((prev) =>
-      prev.map((m) => (m.id === pendingId ? { ...m, content: (m.content || "") + chunk } : m))
-    );
-  }
 
   async function send() {
     if (sending) return;
@@ -83,84 +77,21 @@ export default function ChatPage() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Accept: "text/event-stream",
+          Accept: "application/json", // ✅ JSON-only
         },
-        body: JSON.stringify({ message: text, mode, stream: true }),
+        body: JSON.stringify({ message: text, mode, stream: false }), // ✅ stream off
       });
 
-      const contentType = res.headers.get("content-type") || "";
-
-      // ✅ If server didn't stream, read as TEXT first so HTML/404 is visible
-      if (!contentType.includes("text/event-stream")) {
-        const raw = await res.text();
-        let j: any = null;
-        try {
-          j = JSON.parse(raw);
-        } catch {
-          // not json (could be html 404, proxy error, etc.)
-        }
-
-        if (!res.ok) {
-          throw new Error(j?.error?.message || raw.slice(0, 180) || `HTTP ${res.status}`);
-        }
-
-        const ans = j?.ok?.answer ?? j?.answer ?? "";
-        setMessages((prev) => prev.map((m) => (m.id === pendingId ? { ...m, content: ans } : m)));
-        return;
+      const json = await res.json().catch(() => null);
+      if (!res.ok || json?.ok !== true) {
+        throw new Error(json?.error?.message || `HTTP ${res.status}`);
       }
 
-      if (!res.ok || !res.body) {
-        const raw = await res.text().catch(() => "");
-        throw new Error(raw.slice(0, 180) || `HTTP ${res.status}`);
-      }
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-
-        // SSE messages separated by \n\n
-        const parts = buffer.split("\n\n");
-        buffer = parts.pop() || "";
-
-        for (const part of parts) {
-          const lines = part.split("\n"); // ❌ NO trim (recipe formatting depends on spaces/newlines)
-          let ev = "";
-          const dataLines: string[] = [];
-
-          for (const line of lines) {
-            if (line.startsWith("event:")) {
-              ev = line.slice(6).trim();
-            } else if (line.startsWith("data:")) {
-              const rest = line.slice(5);
-              dataLines.push(rest.startsWith(" ") ? rest.slice(1) : rest);
-            }
-          }
-
-          if (!ev) continue;
-
-          const data = dataLines.join("\n"); // ❌ NO trim
-
-          if (ev === "token") {
-            appendToPending(pendingId, data);
-          } else if (ev === "error") {
-            throw new Error(data || "Stream error");
-          }
-        }
-      }
+      // backend: ok({ mode, answer, disclaimer, lang, dir })
+      const answer = json?.data?.answer ?? "";
 
       setMessages((prev) =>
-        prev.map((m) =>
-          m.id === pendingId && !m.content
-            ? { ...m, content: "No response (empty stream)." }
-            : m
-        )
+        prev.map((m) => (m.id === pendingId ? { ...m, content: answer || "No response." } : m))
       );
     } catch (e: any) {
       setMessages((prev) => prev.filter((m) => m.id !== pendingId));
@@ -208,8 +139,9 @@ export default function ChatPage() {
             {messages.map((m) => {
               const isUser = m.role === "user";
 
+              // ✅ مهم: در RTL، flex-start/end برعکس می‌شود. این را ثابت می‌کنیم.
               const rowStyle: React.CSSProperties = {
-                direction: "ltr",
+                direction: "ltr", // layout always LTR (left/right stable)
                 display: "flex",
                 width: "100%",
                 justifyContent: isUser ? "flex-end" : "flex-start",
@@ -218,6 +150,7 @@ export default function ChatPage() {
               return (
                 <div key={m.id} style={rowStyle}>
                   <div style={bubble}>
+                    {/* ✅ متن bidi درست */}
                     <bdi
                       dir="auto"
                       style={{
