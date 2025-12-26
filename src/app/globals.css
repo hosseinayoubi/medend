@@ -1,0 +1,28 @@
+/* Global styles */
+
+:root {
+  /* default (Latin) font stack */
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+}
+
+/* Persian / Arabic */
+:lang(fa),
+:lang(ar) {
+  font-family: var(--font-vazir), var(--font-arabic), ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Hebrew */
+:lang(he) {
+  font-family: var(--font-hebrew), ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Utility helpers */
+.rtl {
+  direction: rtl;
+  text-align: right;
+}
+
+.ltr {
+  direction: ltr;
+  text-align: left;
+}
