@@ -11,6 +11,51 @@ function uid(prefix = "m") {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+/** Project's current 20 langs (based on /public/locales/*.js) */
+type Lang =
+  | "en"
+  | "fa"
+  | "ar"
+  | "he"
+  | "tr"
+  | "de"
+  | "fr"
+  | "es"
+  | "it"
+  | "pt"
+  | "ru"
+  | "sv"
+  | "fi"
+  | "nl"
+  | "ja"
+  | "hi"
+  | "pl"
+  | "uk"
+  | "ur"
+  | "zh";
+
+const DEFAULT_LANG: Lang = "en";
+const RTL_LANGS = new Set<Lang>(["fa", "ar", "he", "ur"]);
+
+function getCookie(name: string) {
+  if (typeof document === "undefined") return "";
+  const m = document.cookie.match(
+    new RegExp("(?:^|; )" + name.replace(/[.$?*|{}()[\]\\/+^]/g, "\\$&") + "=([^;]*)")
+  );
+  return m ? decodeURIComponent(m[1]) : "";
+}
+
+function detectUiLang(): Lang {
+  // priority: localStorage -> cookie -> default
+  try {
+    const v = (localStorage.getItem("language") || "").toLowerCase();
+    if (v) return v as Lang;
+  } catch {}
+  const c = (getCookie("lang") || "").toLowerCase();
+  if (c) return c as Lang;
+  return DEFAULT_LANG;
+}
+
 export default function ChatPage() {
   const [mode, setMode] = useState<Mode>("medical");
   const [input, setInput] = useState("");
@@ -18,9 +63,35 @@ export default function ChatPage() {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // UI lang/dir (for fonts + overall direction)
+  const [uiLang, setUiLang] = useState<Lang>(DEFAULT_LANG);
+  const uiDir: "rtl" | "ltr" = RTL_LANGS.has(uiLang) ? "rtl" : "ltr";
+
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
+  const headerLabel = useMemo(() => {
+    if (mode === "medical") return "Medical";
+    if (mode === "therapy") return "Therapy";
+    return "Recipe";
+  }, [mode]);
+
+  function appendToPending(pendingId: string, chunk: string) {
+    setMessages((prev) =>
+      prev.map((m) => (m.id === pendingId ? { ...m, content: (m.content || "") + chunk } : m))
+    );
+  }
+
   useEffect(() => {
+    // Apply UI lang/dir to <html> so fonts (lang selectors) + direction behave consistently
+    const l = detectUiLang();
+    setUiLang(l);
+
+    try {
+      document.documentElement.lang = l;
+      document.documentElement.dir = RTL_LANGS.has(l) ? "rtl" : "ltr";
+    } catch {}
+
     (async () => {
       const ok = await requireAuth();
       if (!ok) return;
@@ -28,6 +99,7 @@ export default function ChatPage() {
       try {
         const res = await fetch("/api/chat", { cache: "no-store" });
         const json = await res.json().catch(() => null);
+
         if (res.ok && json?.ok?.messages) {
           const serverMsgs = (json.ok.messages as any[]).map((m: any) => ({
             id: m.id || uid("srv"),
@@ -48,24 +120,14 @@ export default function ChatPage() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, sending]);
 
-  const headerLabel = useMemo(() => {
-    if (mode === "therapy") return "Therapy";
-    if (mode === "recipe") return "Recipe";
-    return "Medical";
-  }, [mode]);
-
-  function appendToPending(pendingId: string, chunk: string) {
-    setMessages((prev) =>
-      prev.map((m) => (m.id === pendingId ? { ...m, content: (m.content || "") + chunk } : m))
-    );
-  }
-
   async function send() {
-    if (!input.trim() || sending) return;
+    if (sending) return;
+
+    const text = input.trim();
+    if (!text) return;
 
     setError(null);
 
-    const text = input.trim();
     const userMsg: Msg = { id: uid("u"), role: "user", content: text, mode };
     const pendingId = uid("a");
     const pendingMsg: Msg = { id: pendingId, role: "assistant", content: "", mode };
@@ -95,7 +157,7 @@ export default function ChatPage() {
       let buffer = "";
 
       while (true) {
-        const { value, done } = await reader.read();
+        const { done, value } = await reader.read();
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
@@ -106,32 +168,36 @@ export default function ChatPage() {
 
         for (const part of parts) {
           const lines = part.split("\n").map((l) => l.trim());
-          const ev = lines.find((l) => l.startsWith("event:"))?.replace("event:", "").trim() || "";
-          const dataLines = lines.filter((l) => l.startsWith("data:")).map((l) => l.replace("data:", "").trim());
+          const ev =
+            lines.find((l) => l.startsWith("event:"))?.replace("event:", "").trim() || "";
+          const dataLines = lines
+            .filter((l) => l.startsWith("data:"))
+            .map((l) => l.replace("data:", "").trim());
           const data = dataLines.join("\n");
 
           if (!ev) continue;
 
           if (ev === "token") {
+            // backend sends raw text chunk (not JSON)
             appendToPending(pendingId, data);
-          } else if (ev === "done") {
-            // اگر خواستی disclaimer رو هم اضافه کنی:
+          } else if (ev === "meta") {
+            // optional: backend may send {mode, lang, dir}
+            // we don't need it for BIDI fix, but keep safe parsing:
             // const payload = JSON.parse(data);
-            // if (payload?.disclaimer) appendToPending(pendingId, `\n\n${payload.disclaimer}`);
+            // console.log(payload);
           } else if (ev === "error") {
             throw new Error(data || "Stream error");
           }
         }
       }
 
-      // اگر استریم به هر دلیل خالی موند:
+      // If stream ended with empty output:
       setMessages((prev) =>
         prev.map((m) => (m.id === pendingId && !m.content ? { ...m, content: "No response." } : m))
       );
     } catch (e: any) {
-      // pending رو حذف نکن، بهتره error بده یا خالی نمونه
       setMessages((prev) =>
-        prev.map((m) => (m.id === pendingId ? { ...m, content: m.content || "" } : m))
+        prev.map((m) => (m.id === pendingId ? { ...m, content: "" } : m))
       );
 
       const msg = String(e?.message || "");
@@ -146,7 +212,7 @@ export default function ChatPage() {
   }
 
   return (
-    <Shell>
+    <Shell lang={uiLang} dir={uiDir}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
         <div>
           <div style={{ fontSize: 18, fontWeight: 700, color: "#0f172a" }}>Chat</div>
@@ -166,7 +232,7 @@ export default function ChatPage() {
             <option value="recipe">Recipe</option>
           </select>
 
-          <Link href="/account" style={btn}>
+          <Link href="/account" style={linkBtn}>
             Account
           </Link>
         </div>
@@ -192,12 +258,21 @@ export default function ChatPage() {
                   border: "1px solid #e2e8f0",
                   background: "#fff",
                   color: "#0f172a",
-                  whiteSpace: "pre-wrap",
                   lineHeight: 1.5,
                   minHeight: m.role === "assistant" && sending && m.content === "" ? 22 : undefined,
+
+                  /* overflow fix even if CSS fails to load */
+                  overflowWrap: "anywhere",
+                  wordBreak: "break-word",
+                  whiteSpace: "pre-wrap",
+                  unicodeBidi: "plaintext",
                 }}
+                // THE KEY: let browser decide direction per message
+                dir="auto"
+                className="chatBubble"
               >
-                {m.content || (m.role === "assistant" && sending ? "…" : "")}
+                {/* THE KEY: prevents bidi mixing (numbers/URLs/English inside Persian) */}
+                <bdi>{m.content || (m.role === "assistant" && sending ? "…" : "")}</bdi>
               </div>
             ))}
             <div ref={bottomRef} />
@@ -217,20 +292,18 @@ export default function ChatPage() {
               send();
             }
           }}
-          disabled={sending}
-          placeholder="Type your message…"
-          rows={2}
+          placeholder="Write a message…"
           style={{
-            flex: 1,
-            padding: "10px 12px",
-            borderRadius: 12,
-            border: "1px solid #e2e8f0",
-            resize: "vertical",
-            opacity: sending ? 0.7 : 1,
+            ...textarea,
+            unicodeBidi: "plaintext",
+            overflowWrap: "anywhere",
+            wordBreak: "break-word",
           }}
+          dir="auto"
+          lang={uiLang}
         />
 
-        <button onClick={send} disabled={sending || !input.trim()} style={btnPrimary}>
+        <button onClick={send} disabled={sending} style={button}>
           {sending ? "Sending…" : "Send"}
         </button>
       </div>
@@ -238,66 +311,81 @@ export default function ChatPage() {
   );
 }
 
-function Shell({ children }: { children: React.ReactNode }) {
+function Shell(props: { children: React.ReactNode; lang: string; dir: "rtl" | "ltr" }) {
   return (
-    <main style={{ maxWidth: 920, margin: "0 auto", padding: "24px 16px" }}>
-      <div style={{ display: "flex", gap: 16, alignItems: "center", marginBottom: 12 }}>
-        <Link href="/" style={{ textDecoration: "none", color: "#0f172a", fontWeight: 700 }}>
-          medend
-        </Link>
-        <Link href="/chat" style={{ textDecoration: "none", color: "#0f172a" }}>
-          Chat
-        </Link>
-      </div>
-
-      <div style={{ border: "1px solid #e2e8f0", borderRadius: 16, padding: 16, background: "#ffffff" }}>
-        {children}
-      </div>
-    </main>
+    <div
+      lang={props.lang}
+      dir={props.dir}
+      style={{
+        maxWidth: 920,
+        margin: "30px auto",
+        padding: 16,
+        display: "flex",
+        flexDirection: "column",
+        gap: 12,
+      }}
+    >
+      {props.children}
+    </div>
   );
 }
 
-const select: React.CSSProperties = {
-  padding: "10px 12px",
-  borderRadius: 10,
-  border: "1px solid #e2e8f0",
-  background: "#fff",
-};
-
 const box: React.CSSProperties = {
-  marginTop: 14,
   border: "1px solid #e2e8f0",
-  borderRadius: 16,
-  padding: 14,
-  minHeight: 360,
-  background: "#ffffff",
+  borderRadius: 14,
+  padding: 12,
+  minHeight: 380,
+  background: "#f8fafc",
+  overflow: "hidden",
 };
 
-const btn: React.CSSProperties = {
-  padding: "10px 14px",
+const textarea: React.CSSProperties = {
+  flex: 1,
+  border: "1px solid #e2e8f0",
   borderRadius: 12,
-  border: "1px solid #e2e8f0",
-  background: "#ffffff",
-  textDecoration: "none",
+  padding: "10px 12px",
+  minHeight: 44,
+  maxHeight: 180,
+  resize: "vertical",
+  outline: "none",
+  background: "#fff",
   color: "#0f172a",
-  display: "inline-flex",
-  alignItems: "center",
-  gap: 8,
+  lineHeight: 1.5,
 };
 
-const btnPrimary: React.CSSProperties = {
-  ...btn,
+const button: React.CSSProperties = {
+  border: "1px solid #0f172a",
   background: "#0f172a",
-  borderColor: "#0f172a",
-  color: "#ffffff",
+  color: "#fff",
+  borderRadius: 12,
+  padding: "10px 14px",
+  fontWeight: 700,
   cursor: "pointer",
 };
 
-const alertError: React.CSSProperties = {
-  marginTop: 12,
-  padding: "10px 12px",
+const select: React.CSSProperties = {
+  border: "1px solid #e2e8f0",
+  background: "#fff",
+  color: "#0f172a",
   borderRadius: 12,
-  background: "#fef2f2",
+  padding: "8px 10px",
+  outline: "none",
+};
+
+const linkBtn: React.CSSProperties = {
+  border: "1px solid #e2e8f0",
+  background: "#fff",
+  color: "#0f172a",
+  borderRadius: 12,
+  padding: "8px 10px",
+  textDecoration: "none",
+  fontWeight: 700,
+};
+
+const alertError: React.CSSProperties = {
   border: "1px solid #fecaca",
-  color: "#991b1b",
+  background: "#fef2f2",
+  color: "#7f1d1d",
+  borderRadius: 12,
+  padding: "10px 12px",
 };
