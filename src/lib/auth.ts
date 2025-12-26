@@ -14,6 +14,18 @@ function newToken() {
   return crypto.randomBytes(32).toString("hex");
 }
 
+function expireCookie() {
+  cookies().set({
+    name: COOKIE_NAME,
+    value: "",
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    expires: new Date(0),
+  });
+}
+
 export async function createSession(userId: string) {
   const token = newToken();
   const tokenHash = sha256(token);
@@ -36,16 +48,22 @@ export async function createSession(userId: string) {
 
 export async function destroySession() {
   const token = cookies().get(COOKIE_NAME)?.value;
-  cookies().delete(COOKIE_NAME);
+
+  // expire cookie explicitly (سازگارتر از delete)
+  expireCookie();
 
   if (!token) return;
+
   const tokenHash = sha256(token);
   await prisma.session.deleteMany({ where: { tokenHash } });
 }
 
 export async function getAuthedUser() {
   const token = cookies().get(COOKIE_NAME)?.value;
-  if (!token) throw new AppError("UNAUTHORIZED", "Not logged in", 401);
+  if (!token) {
+    // کوکی‌ای نداریم، چیزی برای expire کردن هم نیست
+    throw new AppError("UNAUTHORIZED", "Not logged in", 401);
+  }
 
   const tokenHash = sha256(token);
 
@@ -54,10 +72,16 @@ export async function getAuthedUser() {
     include: { user: true },
   });
 
-  if (!session) throw new AppError("UNAUTHORIZED", "Invalid session", 401);
+  if (!session) {
+    // اگر کوکی هست ولی سشن نیست، کوکی رو هم پاک کن
+    expireCookie();
+    throw new AppError("UNAUTHORIZED", "Invalid session", 401);
+  }
 
   if (session.expiresAt.getTime() < Date.now()) {
-    await prisma.session.delete({ where: { tokenHash } }).catch(() => {});
+    // سشن منقضی شده → دیتابیس پاک + کوکی expire
+    await prisma.session.deleteMany({ where: { tokenHash } }).catch(() => {});
+    expireCookie();
     throw new AppError("UNAUTHORIZED", "Session expired", 401);
   }
 
