@@ -27,6 +27,10 @@ function isRtl(lang: Lang) {
   return lang === "fa" || lang === "ar" || lang === "he";
 }
 
+function appFail(e: AppError, init?: ResponseInit) {
+  return fail(e.code, e.message, e.status, e.extra, init);
+}
+
 /**
  * Heuristic:
  * - Hebrew range => he
@@ -39,7 +43,6 @@ function detectLang(text: string): Lang {
 
   // Arabic script (includes Persian/Urdu, etc)
   if (/[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]/.test(text)) {
-    // Arabic-ish letters/marks more common in Arabic than Persian
     const arabicOnly = /[ةؤئأإءًٌٍَُِّٰ]/;
     if (arabicOnly.test(text)) return "ar";
     return "fa";
@@ -49,7 +52,6 @@ function detectLang(text: string): Lang {
 }
 
 function normalizeFa(s: string) {
-  // normalize Arabic yeh/kaf to Persian, add spacing after punctuation, collapse whitespace
   return s
     .replace(/ي/g, "ی")
     .replace(/ك/g, "ک")
@@ -101,7 +103,6 @@ function systemPrompt(mode: ChatMode, lang: Lang) {
     ].join(" ");
   }
 
-  // medical
   return [
     base,
     "You are a careful medical information assistant.",
@@ -163,9 +164,7 @@ async function fetchOpenAiJson(opts: {
     const final = lang === "fa" ? normalizeFa(String(content)) : String(content).trim();
     return { answer: final, disclaimer: disclaimer(mode, lang) };
   } catch (e: any) {
-    if (e?.name === "AbortError") {
-      throw new AppError("LLM_TIMEOUT", "LLM request timed out", 504);
-    }
+    if (e?.name === "AbortError") throw new AppError("LLM_TIMEOUT", "LLM request timed out", 504);
     if (e instanceof AppError) throw e;
     throw new AppError("LLM_ERROR", "LLM request failed", 502);
   } finally {
@@ -259,9 +258,7 @@ async function fetchOpenAiStream(opts: {
     const final = lang === "fa" ? normalizeFa(full) : full.trim();
     return { answer: final, disclaimer: disclaimer(mode, lang) };
   } catch (e: any) {
-    if (e?.name === "AbortError") {
-      throw new AppError("LLM_TIMEOUT", "LLM request timed out", 504);
-    }
+    if (e?.name === "AbortError") throw new AppError("LLM_TIMEOUT", "LLM request timed out", 504);
     if (e instanceof AppError) throw e;
     throw new AppError("LLM_ERROR", "LLM request failed", 502);
   } finally {
@@ -276,10 +273,11 @@ export async function GET() {
     const messages = await listRecentMessages(user.id, 50);
     return ok({ messages });
   } catch (e: any) {
+    // ✅ fail() signature fix
     if (e?.code === "UNAUTHENTICATED") {
-      return fail(new AppError("UNAUTHENTICATED", "Please login", 401));
+      return fail("UNAUTHENTICATED", "Please login", 401);
     }
-    return fail(new AppError("SERVER_ERROR", "Failed to load messages", 500));
+    return fail("SERVER_ERROR", "Failed to load messages", 500);
   }
 }
 
@@ -302,7 +300,6 @@ export async function POST(req: Request) {
       req.headers.get("accept")?.includes("text/event-stream") === true;
 
     if (!wantStream) {
-      // ✅ JSON-only stable path
       await prisma.chatMessage.create({
         data: { userId: user.id, role: "user", mode, content: message },
       });
@@ -311,7 +308,7 @@ export async function POST(req: Request) {
         mode,
         lang,
         message,
-        signal: new AbortController().signal,
+        signal: req.signal, // ✅ respects client abort
       });
 
       await prisma.chatMessage.create({
@@ -327,7 +324,6 @@ export async function POST(req: Request) {
       });
     }
 
-    // ✅ SSE path (optional)
     const encoder = new TextEncoder();
     const aborter = new AbortController();
 
@@ -402,8 +398,8 @@ export async function POST(req: Request) {
   } catch (e: any) {
     if (e instanceof AppError) {
       if (e.code === "RATE_LIMIT") return failRateLimited(e);
-      return fail(e);
+      return appFail(e); // ✅ fail() signature fix
     }
-    return fail(new AppError("SERVER_ERROR", "Unexpected error", 500));
+    return fail("SERVER_ERROR", "Unexpected error", 500);
   }
 }
