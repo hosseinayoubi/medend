@@ -16,3 +16,5 @@ pnpm-debug.log*
 Thumbs.db
 
 prisma/dev.db
+.vercel
+.env*.local
