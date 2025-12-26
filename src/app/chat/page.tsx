@@ -5,7 +5,13 @@ import Link from "next/link";
 import { requireAuth } from "@/lib/clientAuth";
 
 type Mode = "medical" | "therapy" | "recipe";
-type Msg = { id: string; role: "user" | "assistant"; content: string; mode?: Mode; createdAt?: string };
+type Msg = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  mode?: Mode;
+  createdAt?: string;
+};
 
 function uid(prefix = "m") {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -29,8 +35,9 @@ export default function ChatPage() {
 
       try {
         const res = await fetch("/api/chat", { cache: "no-store" });
-        const json = await res.json();
-        if (json?.ok?.messages) {
+        const json = await res.json().catch(() => null);
+
+        if (res.ok && json?.ok?.messages) {
           const serverMsgs = (json.ok.messages as any[]).map((m) => ({
             id: m.id || uid("srv"),
             role: m.role,
@@ -48,7 +55,7 @@ export default function ChatPage() {
     })();
   }, []);
 
-  // Auto-scroll
+  // Auto-scroll on new messages / sending state change
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, sending]);
@@ -80,22 +87,33 @@ export default function ChatPage() {
         body: JSON.stringify({ message: text, mode }),
       });
 
-      const json = await res.json();
-      if (!json?.ok) throw new Error(json?.message || "Chat failed");
+      const json = await res.json().catch(() => null);
 
-      const reply = json?.ok?.reply ?? "No response.";
+      // ✅ مهم: اگر HTTP error بود، متن خطا رو درست بالا بیار
+      if (!res.ok) {
+        throw new Error(json?.error?.message || `HTTP ${res.status}`);
+      }
+
+      // ✅ مهم: اگر ok=false بود
+      if (!json?.ok) {
+        throw new Error(json?.error?.message || "Chat failed");
+      }
+
+      // ✅ فیکس اصلی: پاسخ واقعی از data.answer میاد
+      const reply: string = json?.data?.answer ?? "No response.";
 
       setMessages((prev) =>
         prev.map((m) => (m.id === pendingId ? { ...m, content: reply } : m))
       );
     } catch (e: any) {
+      // pending رو حذف کن
       setMessages((prev) => prev.filter((m) => m.id !== pendingId));
 
       const msg = String(e?.message || "");
       if (msg.toLowerCase().includes("timeout") || msg.toLowerCase().includes("timed out")) {
         setError("Model is taking too long. Please try again.");
       } else {
-        setError("Could not send. Try again.");
+        setError(msg || "Could not send. Try again.");
       }
     } finally {
       setSending(false);
@@ -122,6 +140,7 @@ export default function ChatPage() {
             <option value="therapy">Therapy</option>
             <option value="recipe">Recipe</option>
           </select>
+
           <Link href="/account" style={btn}>
             Account
           </Link>
@@ -184,6 +203,7 @@ export default function ChatPage() {
             opacity: sending ? 0.7 : 1,
           }}
         />
+
         <button onClick={send} disabled={sending || !input.trim()} style={btnPrimary}>
           {sending ? "Sending…" : "Send"}
         </button>
