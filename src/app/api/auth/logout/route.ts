@@ -1,11 +1,15 @@
-import { ok, fail } from "@/lib/response";
+import { ok } from "@/lib/response";
 import { destroySession } from "@/lib/auth";
+
+export const dynamic = "force-dynamic";
 
 export async function POST() {
   try {
     await destroySession();
-    return ok({ done: true });
   } catch {
-    return fail("SERVER_ERROR", "Something went wrong", 500);
+    // logout should be idempotent: even if something goes wrong,
+    // return success so the client can safely reset UI state.
   }
+
+  return ok({ done: true });
 }
