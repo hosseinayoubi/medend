@@ -7,7 +7,8 @@
 
 /* Persian / Arabic */
 :lang(fa),
-:lang(ar) {
+:lang(ar),
+:lang(ur) {
   font-family: var(--font-vazir), var(--font-arabic), ui-sans-serif, system-ui, sans-serif;
 }
 
@@ -25,4 +26,21 @@
 .ltr {
   direction: ltr;
   text-align: left;
+}
+
+/* =========================================
+   Chat text (BIDI + overflow fixes)
+   ========================================= */
+
+.chatBubble {
+  max-width: 100%;
+  white-space: pre-wrap;     /* keep new lines */
+  overflow-wrap: anywhere;   /* break long URLs / words */
+  word-break: break-word;    /* fallback */
+  unicode-bidi: plaintext;   /* IMPORTANT: fixes mixed RTL/LTR order */
+}
+
+.chatBubble a {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
