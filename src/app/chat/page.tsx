@@ -33,7 +33,8 @@ export default function ChatPage() {
       if (!ok) return;
 
       try {
-        const res = await fetch("/api/chat/", { cache: "no-store" });
+        // ✅ IMPORTANT: no trailing slash (prevents 404/rewrites issues under i18n paths)
+        const res = await fetch("/api/chat", { cache: "no-store" });
         const json = await res.json().catch(() => null);
 
         if (res.ok && json?.ok?.messages) {
@@ -87,19 +88,30 @@ export default function ChatPage() {
         body: JSON.stringify({ message: text, mode, stream: true }),
       });
 
-      // fallback: if server didn't stream, try JSON
       const contentType = res.headers.get("content-type") || "";
+
+      // ✅ If server didn't stream, read as TEXT first so HTML/404 is visible
       if (!contentType.includes("text/event-stream")) {
-        const j = await res.json().catch(() => null);
-        if (!res.ok) throw new Error(j?.error?.message || `HTTP ${res.status}`);
+        const raw = await res.text();
+        let j: any = null;
+        try {
+          j = JSON.parse(raw);
+        } catch {
+          // not json (could be html 404, proxy error, etc.)
+        }
+
+        if (!res.ok) {
+          throw new Error(j?.error?.message || raw.slice(0, 180) || `HTTP ${res.status}`);
+        }
+
         const ans = j?.ok?.answer ?? j?.answer ?? "";
         setMessages((prev) => prev.map((m) => (m.id === pendingId ? { ...m, content: ans } : m)));
         return;
       }
 
       if (!res.ok || !res.body) {
-        const j = await res.json().catch(() => null);
-        throw new Error(j?.error?.message || `HTTP ${res.status}`);
+        const raw = await res.text().catch(() => "");
+        throw new Error(raw.slice(0, 180) || `HTTP ${res.status}`);
       }
 
       const reader = res.body.getReader();
@@ -124,9 +136,8 @@ export default function ChatPage() {
 
           for (const line of lines) {
             if (line.startsWith("event:")) {
-              ev = line.slice(6).trim(); // ok to trim just the event name
+              ev = line.slice(6).trim();
             } else if (line.startsWith("data:")) {
-              // SSE often has one optional space after "data:"
               const rest = line.slice(5);
               dataLines.push(rest.startsWith(" ") ? rest.slice(1) : rest);
             }
@@ -145,7 +156,11 @@ export default function ChatPage() {
       }
 
       setMessages((prev) =>
-        prev.map((m) => (m.id === pendingId && !m.content ? { ...m, content: "No response." } : m))
+        prev.map((m) =>
+          m.id === pendingId && !m.content
+            ? { ...m, content: "No response (empty stream)." }
+            : m
+        )
       );
     } catch (e: any) {
       setMessages((prev) => prev.filter((m) => m.id !== pendingId));
@@ -193,7 +208,6 @@ export default function ChatPage() {
             {messages.map((m) => {
               const isUser = m.role === "user";
 
-              // ✅ FIX اصلی: این container همیشه LTR باشد تا flex-start/end ثابت بماند
               const rowStyle: React.CSSProperties = {
                 direction: "ltr",
                 display: "flex",
@@ -204,7 +218,6 @@ export default function ChatPage() {
               return (
                 <div key={m.id} style={rowStyle}>
                   <div style={bubble}>
-                    {/* ✅ متن داخل bubble با auto (bidi درست برای فارسی+انگلیسی/URL/عدد) */}
                     <bdi
                       dir="auto"
                       style={{
