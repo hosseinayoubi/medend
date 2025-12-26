@@ -1,4 +1,3 @@
-// src/lib/response.ts
 import { NextResponse } from "next/server";
 
 function withNoStore(init?: ResponseInit): ResponseInit {
