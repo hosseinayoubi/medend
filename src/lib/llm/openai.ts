@@ -15,7 +15,7 @@ function systemPrompt(mode: ChatMode) {
       "Do not claim to be a licensed clinician.",
       "Encourage safe, practical next steps, and suggest professional help if crisis signals appear.",
       "Keep responses concise, warm, and ask 1-2 gentle follow-up questions.",
-      "Add a brief disclaimer at the end."
+      "Add a brief disclaimer at the end.",
     ].join(" ");
   }
   if (mode === "recipe") {
@@ -23,14 +23,14 @@ function systemPrompt(mode: ChatMode) {
       "You are a nutrition-minded recipe assistant.",
       "Return 3 recipe options with: ingredients, steps, estimated calories, protein/carbs/fat.",
       "Ask for allergies/diet preference if missing.",
-      "Keep it practical and fast (15-30 min) unless user asks otherwise."
+      "Keep it practical and fast (15-30 min) unless user asks otherwise.",
     ].join(" ");
   }
   return [
     "You are a medical information assistant.",
     "You must not provide definitive diagnosis.",
     "Ask clarifying questions, flag red-flag symptoms, advise seeking professional care when appropriate.",
-    "Keep it safe and include a disclaimer."
+    "Keep it safe and include a disclaimer.",
   ].join(" ");
 }
 
@@ -42,22 +42,25 @@ function disclaimer(mode: ChatMode) {
 
 export const openaiProvider: LlmProvider = {
   async respond({ mode, message }) {
-    if (!OPENAI_API_KEY) throw new AppError("LLM_NOT_CONFIGURED", "OPENAI_API_KEY is missing", 500);
+    if (!OPENAI_API_KEY) {
+      throw new AppError("LLM_NOT_CONFIGURED", "OPENAI_API_KEY is missing", 500);
+    }
 
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${OPENAI_API_KEY}`,
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
       },
       body: JSON.stringify({
         model: OPENAI_MODEL,
-        temperature: 0.4,
+        // NOTE: Do NOT send temperature for gpt-5-mini here.
+        // This model only supports the default temperature (1), and sending e.g. 0.4 causes a 400.
         messages: [
           { role: "system", content: systemPrompt(mode) },
-          { role: "user", content: message }
-        ]
-      })
+          { role: "user", content: message },
+        ],
+      }),
     });
 
     if (!res.ok) {
@@ -65,8 +68,8 @@ export const openaiProvider: LlmProvider = {
       throw new AppError("LLM_ERROR", `OpenAI error: ${res.status} ${text}`.slice(0, 500), 502);
     }
 
-    const data = await res.json() as any;
+    const data = (await res.json()) as any;
     const answer = data?.choices?.[0]?.message?.content ?? "";
     return { mode, answer, disclaimer: disclaimer(mode) };
-  }
+  },
 };
