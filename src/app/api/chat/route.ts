@@ -18,7 +18,8 @@ function appFail(e: AppError, init?: ResponseInit) {
 
 export async function GET(req: Request) {
   try {
-    const user = await getAuthedUser(req);
+    // ✅ FIX: getAuthedUser هیچ آرگومان نمی‌گیرد
+    const user = await getAuthedUser();
     if (!user) return fail("UNAUTHENTICATED", "Please login", 401);
 
     const url = new URL(req.url);
@@ -46,7 +47,8 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   try {
-    const user = await getAuthedUser(req);
+    // ✅ FIX: getAuthedUser هیچ آرگومان نمی‌گیرد
+    const user = await getAuthedUser();
     if (!user) return fail("UNAUTHENTICATED", "Please login", 401);
 
     const ip = getClientIp(req);
