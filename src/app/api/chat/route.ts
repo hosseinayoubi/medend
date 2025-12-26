@@ -27,22 +27,24 @@ function isRtl(lang: Lang) {
   return lang === "fa" || lang === "ar" || lang === "he";
 }
 
+/** fail() در پروژه شما AppError نمی‌گیرد؛ این helper تبدیل می‌کند */
 function appFail(e: AppError, init?: ResponseInit) {
   return fail(e.code, e.message, e.status, e.extra, init);
 }
 
 /**
- * Heuristic:
- * - Hebrew range => he
- * - Arabic-script => fa by default (to satisfy Persian users)
- *   unless we see Arabic-specific letters/diacritics => ar
+ * تشخیص زبان (ساده ولی کاربردی)
+ * - عبری: he
+ * - اسکریپت عربی: fa پیش‌فرض (برای فارسی) مگر نشانه‌های عربی واضح باشد => ar
+ * - بقیه: en
  */
 function detectLang(text: string): Lang {
   // Hebrew
   if (/[\u0590-\u05FF]/.test(text)) return "he";
 
-  // Arabic script (includes Persian/Urdu, etc)
+  // Arabic script (includes Persian/Urdu etc)
   if (/[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]/.test(text)) {
+    // Arabic-ish letters/marks more common in Arabic than Persian
     const arabicOnly = /[ةؤئأإءًٌٍَُِّٰ]/;
     if (arabicOnly.test(text)) return "ar";
     return "fa";
@@ -89,7 +91,6 @@ function systemPrompt(mode: ChatMode, lang: Lang) {
       "You are a supportive, non-judgmental therapy-style assistant.",
       "Do not claim to be a licensed clinician.",
       "Ask 1-2 gentle follow-up questions when helpful.",
-      "Include a brief safety disclaimer if relevant.",
     ].join(" ");
   }
 
@@ -103,6 +104,7 @@ function systemPrompt(mode: ChatMode, lang: Lang) {
     ].join(" ");
   }
 
+  // medical
   return [
     base,
     "You are a careful medical information assistant.",
@@ -115,6 +117,10 @@ function sseEvent(event: string, data: string) {
   return `event: ${event}\ndata: ${data}\n\n`;
 }
 
+/**
+ * JSON-only call to OpenAI (stable)
+ * IMPORTANT: uses max_completion_tokens (not max_tokens)
+ */
 async function fetchOpenAiJson(opts: {
   mode: ChatMode;
   lang: Lang;
@@ -131,7 +137,6 @@ async function fetchOpenAiJson(opts: {
   const controller = new AbortController();
   const abort = () => controller.abort();
   signal.addEventListener("abort", abort);
-
   const t = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
@@ -145,7 +150,7 @@ async function fetchOpenAiJson(opts: {
       body: JSON.stringify({
         model: OPENAI_MODEL,
         stream: false,
-        max_tokens: maxTokens,
+        max_completion_tokens: maxTokens,
         messages: [
           { role: "system", content: systemPrompt(mode, lang) },
           { role: "user", content: message },
@@ -155,13 +160,18 @@ async function fetchOpenAiJson(opts: {
 
     if (!res.ok) {
       const txt = await res.text().catch(() => "");
-      throw new AppError("LLM_ERROR", `OpenAI error: ${res.status} ${txt}`.slice(0, 700), 502);
+      throw new AppError(
+        "LLM_ERROR",
+        `OpenAI error: ${res.status} ${txt}`.slice(0, 900),
+        502
+      );
     }
 
     const json: any = await res.json();
     const content = json?.choices?.[0]?.message?.content ?? "";
+    const raw = String(content);
 
-    const final = lang === "fa" ? normalizeFa(String(content)) : String(content).trim();
+    const final = lang === "fa" ? normalizeFa(raw) : raw.trim();
     return { answer: final, disclaimer: disclaimer(mode, lang) };
   } catch (e: any) {
     if (e?.name === "AbortError") throw new AppError("LLM_TIMEOUT", "LLM request timed out", 504);
@@ -173,6 +183,10 @@ async function fetchOpenAiJson(opts: {
   }
 }
 
+/**
+ * Optional SSE call to OpenAI
+ * IMPORTANT: uses max_completion_tokens (not max_tokens)
+ */
 async function fetchOpenAiStream(opts: {
   mode: ChatMode;
   lang: Lang;
@@ -190,7 +204,6 @@ async function fetchOpenAiStream(opts: {
   const controller = new AbortController();
   const abort = () => controller.abort();
   signal.addEventListener("abort", abort);
-
   const t = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
@@ -204,7 +217,7 @@ async function fetchOpenAiStream(opts: {
       body: JSON.stringify({
         model: OPENAI_MODEL,
         stream: true,
-        max_tokens: maxTokens,
+        max_completion_tokens: maxTokens,
         messages: [
           { role: "system", content: systemPrompt(mode, lang) },
           { role: "user", content: message },
@@ -214,7 +227,11 @@ async function fetchOpenAiStream(opts: {
 
     if (!res.ok || !res.body) {
       const text = await res.text().catch(() => "");
-      throw new AppError("LLM_ERROR", `OpenAI error: ${res.status} ${text}`.slice(0, 700), 502);
+      throw new AppError(
+        "LLM_ERROR",
+        `OpenAI error: ${res.status} ${text}`.slice(0, 900),
+        502
+      );
     }
 
     const reader = res.body.getReader();
@@ -273,7 +290,6 @@ export async function GET() {
     const messages = await listRecentMessages(user.id, 50);
     return ok({ messages });
   } catch (e: any) {
-    // ✅ fail() signature fix
     if (e?.code === "UNAUTHENTICATED") {
       return fail("UNAUTHENTICATED", "Please login", 401);
     }
@@ -285,6 +301,8 @@ export async function POST(req: Request) {
   try {
     const user = await getAuthedUser();
     const ip = getClientIp(req);
+
+    // 30 req/min
     rateLimitOrThrow(`chat:${user.id}:${ip}`, 30, 60_000);
 
     const rawBody: any = await req.json();
@@ -297,8 +315,9 @@ export async function POST(req: Request) {
 
     const wantStream =
       rawBody?.stream === true ||
-      req.headers.get("accept")?.includes("text/event-stream") === true;
+      (req.headers.get("accept") || "").includes("text/event-stream");
 
+    // ✅ JSON-only (stable) path
     if (!wantStream) {
       await prisma.chatMessage.create({
         data: { userId: user.id, role: "user", mode, content: message },
@@ -308,7 +327,7 @@ export async function POST(req: Request) {
         mode,
         lang,
         message,
-        signal: req.signal, // ✅ respects client abort
+        signal: req.signal, // abort if client disconnects
       });
 
       await prisma.chatMessage.create({
@@ -324,6 +343,7 @@ export async function POST(req: Request) {
       });
     }
 
+    // ✅ SSE path (optional)
     const encoder = new TextEncoder();
     const aborter = new AbortController();
 
@@ -335,7 +355,6 @@ export async function POST(req: Request) {
       start(controller) {
         (async () => {
           let fullAnswer = "";
-
           try {
             controller.enqueue(
               encoder.encode(
@@ -398,7 +417,7 @@ export async function POST(req: Request) {
   } catch (e: any) {
     if (e instanceof AppError) {
       if (e.code === "RATE_LIMIT") return failRateLimited(e);
-      return appFail(e); // ✅ fail() signature fix
+      return appFail(e);
     }
     return fail("SERVER_ERROR", "Unexpected error", 500);
   }
