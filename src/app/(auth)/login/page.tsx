@@ -1,22 +1,17 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import AuthGate from "@/components/auth/AuthGate";
 
 export default function LoginPage() {
   const router = useRouter();
+  const sp = useSearchParams();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-
-  function getNextPath() {
-    if (typeof window === "undefined") return "/dashboard";
-    const sp = new URLSearchParams(window.location.search);
-    return sp.get("next") || "/dashboard";
-  }
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -37,7 +32,8 @@ export default function LoginPage() {
         return;
       }
 
-      router.push(getNextPath());
+      const next = sp.get("next");
+      router.push(next || "/dashboard");
       router.refresh();
     } catch (err: any) {
       setMsg(err?.message || "Login failed");
