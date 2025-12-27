@@ -6,7 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 export default function AuthGate(props: {
   children: React.ReactNode;
   requireAuth?: boolean; // true => باید لاگین باشد
-  redirectTo?: string;   // مقصد اگر شرط برقرار نبود
+  redirectTo?: string; // مقصد اگر شرط برقرار نبود
 }) {
   const { children, requireAuth = true, redirectTo = "/login" } = props;
 
@@ -26,13 +26,13 @@ export default function AuthGate(props: {
         if (!alive) return;
         setStatus(authed ? "authed" : "guest");
 
-        // requireAuth: اگر لاگین نبود -> برو login
+        // اگر صفحه نیاز به auth دارد و کاربر لاگین نیست -> login
         if (requireAuth && !authed) {
           router.replace(`${redirectTo}?next=${encodeURIComponent(pathname)}`);
           return;
         }
 
-        // اگر صفحه auth بود و کاربر لاگین بود -> برو dashboard
+        // اگر صفحه auth است و کاربر لاگین هست -> dashboard
         if (!requireAuth && authed) {
           router.replace("/dashboard");
           return;
@@ -63,7 +63,7 @@ export default function AuthGate(props: {
     );
   }
 
-  // اگر guest هست ولی requireAuth=true، redirect انجام شده و چیزی نشون نمی‌دیم
+  // اگر guest هست ولی requireAuth=true، redirect انجام شده؛ چیزی نمایش نده
   if (requireAuth && status === "guest") return null;
 
   return <>{children}</>;
