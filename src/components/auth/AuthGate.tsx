@@ -5,16 +5,24 @@ import { usePathname, useRouter } from "next/navigation";
 
 export default function AuthGate(props: {
   children: React.ReactNode;
-  requireAuth?: boolean; // true => باید لاگین باشد
-  redirectTo?: string; // مقصد اگر شرط برقرار نبود
+  requireAuth?: boolean;
+  redirectTo?: string;
 }) {
   const { children, requireAuth = true, redirectTo = "/login" } = props;
 
   const router = useRouter();
   const pathname = usePathname();
   const [status, setStatus] = useState<"loading" | "authed" | "guest">("loading");
+  const [mounted, setMounted] = useState(false);
+
+  // ⛑️ مهم‌ترین خط: جلوی prerender را می‌گیرد
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
+    if (!mounted) return;
+
     let alive = true;
 
     async function check() {
@@ -26,13 +34,11 @@ export default function AuthGate(props: {
         if (!alive) return;
         setStatus(authed ? "authed" : "guest");
 
-        // اگر صفحه نیاز به auth دارد و کاربر لاگین نیست -> login
         if (requireAuth && !authed) {
           router.replace(`${redirectTo}?next=${encodeURIComponent(pathname)}`);
           return;
         }
 
-        // اگر صفحه auth است و کاربر لاگین هست -> dashboard
         if (!requireAuth && authed) {
           router.replace("/dashboard");
           return;
@@ -50,9 +56,10 @@ export default function AuthGate(props: {
     return () => {
       alive = false;
     };
-  }, [requireAuth, redirectTo, router, pathname]);
+  }, [mounted, requireAuth, redirectTo, router, pathname]);
 
-  if (status === "loading") {
+  // 🚧 prerender-safe
+  if (!mounted || status === "loading") {
     return (
       <div className="min-h-screen bg-[#0b1220] text-white flex items-center justify-center px-4">
         <div className="rounded-3xl border border-white/10 bg-white/5 p-6 w-full max-w-sm">
@@ -63,7 +70,6 @@ export default function AuthGate(props: {
     );
   }
 
-  // اگر guest هست ولی requireAuth=true، redirect انجام شده؛ چیزی نمایش نده
   if (requireAuth && status === "guest") return null;
 
   return <>{children}</>;
