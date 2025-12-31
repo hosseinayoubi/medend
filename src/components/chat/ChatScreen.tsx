@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
-type ChatMode = "medical" | "therapy" | "recipe";
+type ChatMode = "medical" | "therapy" | "recipe" | "dental";
 
 type Msg = {
   id?: string;
