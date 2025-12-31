@@ -111,15 +111,20 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         <main className="mx-auto max-w-3xl px-4 py-6 pb-24">{children}</main>
 
         {/* Bottom nav */}
-        <nav className="fixed bottom-0 left-0 right-0 z-40 border-t border-white/10 bg-[#0b1220]/80 backdrop-blur">
-          <div className="mx-auto max-w-3xl px-2 py-2 flex items-center justify-between">
-            <NavLink href="/dashboard" label="Home" icon="🏠" />
-            {/* A) Chat همیشه medical */}
-            <NavLink href="/chat/medical" label="Chat" icon="💬" />
-            <NavLink href="/chat/therapy" label="Therapy" icon="🧠" />
-            <NavLink href="/chat/recipe" label="Recipe" icon="🍲" />
-          </div>
-        </nav>
+       {/* Bottom nav */}
+<nav className="fixed bottom-0 left-0 right-0 z-40 border-t border-white/10 bg-[#0b1220]/80 backdrop-blur">
+  <div className="mx-auto max-w-3xl px-2 py-2 flex items-center justify-between">
+    <NavLink href="/dashboard" label="Home" icon="🏠" />
+    {/* A) Chat همیشه medical */}
+    <NavLink href="/chat/medical" label="Chat" icon="💬" />
+
+    {/* ✅ NEW: Dental right after Chat */}
+    <NavLink href="/chat/dental" label="Dental" icon="🦷" />
+
+    <NavLink href="/chat/therapy" label="Therapy" icon="🧠" />
+    <NavLink href="/chat/recipe" label="Recipe" icon="🍲" />
+  </div>
+</nav>
       </div>
     </AuthGate>
   );
